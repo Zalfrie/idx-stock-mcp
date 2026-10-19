@@ -239,3 +239,7 @@ test/           # unit + integration test (node:test, fetch tiruan)
 | `npm test` | Jalankan test (offline, memakai data tiruan) |
 | `npm run inspect` | Coba tools secara interaktif di MCP Inspector |
 | `npm start` | Jalankan server via stdio |
+
+## Lisensi
+
+[MIT](LICENSE) © 2026 Zalfrie
