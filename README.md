@@ -18,6 +18,7 @@ MCP server agar Claude bisa membaca harga saham **Bursa Efek Indonesia (IDX/BEI)
 - [Troubleshooting](#troubleshooting)
 - [Sumber data & batasan](#sumber-data--batasan)
 - [Pengembangan](#pengembangan)
+- [Kontribusi](#kontribusi)
 
 ## Fitur
 
@@ -41,7 +42,7 @@ Kode saham bisa ditulis `BBCA`, `bbca`, atau `BBCA.JK`. Untuk indeks gunakan `IH
 ### 2. Download & build
 
 ```bash
-git clone git@github.com:Zalfrie/idx-stock-mcp.git
+git clone https://github.com/Zalfrie/idx-stock-mcp.git
 cd idx-stock-mcp
 npm install
 npm run build
@@ -279,6 +280,11 @@ test/           # unit + integration test (node:test, fetch tiruan)
 | `npm test` | Jalankan test (offline, memakai data tiruan) |
 | `npm run inspect` | Coba tools secara interaktif di MCP Inspector |
 | `npm start` | Jalankan server via stdio |
+
+## Kontribusi
+
+Laporan bug, usulan fitur, dan PR sangat diterima. Baca [CONTRIBUTING.md](CONTRIBUTING.md) terlebih dahulu.
+Saat melapor bug, gunakan template issue dan sertakan output JSON dari MCP Inspector.
 
 ## Lisensi
 

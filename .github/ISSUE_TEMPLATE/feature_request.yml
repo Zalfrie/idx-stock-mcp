@@ -1,0 +1,27 @@
+name: Usulan fitur
+description: Ide tool baru atau peningkatan
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Catatan: proyek ini sengaja **read-only**. Usulan yang mengeksekusi order atau terhubung ke akun sekuritas tidak akan diterima.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Masalah yang ingin diselesaikan
+      placeholder: "Saya ingin tahu jadwal dividen saham yang saya pegang..."
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Usulan solusi
+      description: Contoh pertanyaan ke Claude dan output yang diharapkan.
+    validations:
+      required: true
+  - type: textarea
+    id: data
+    attributes:
+      label: Sumber data
+      description: Dari mana datanya bisa diambil? Apakah sudah ada di respons Yahoo Finance?

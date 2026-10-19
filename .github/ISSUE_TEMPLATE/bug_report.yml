@@ -1,0 +1,72 @@
+name: Laporan bug
+description: Ada hasil yang salah, error, atau tool tidak berjalan
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Terima kasih sudah melapor! Mohon **jangan** sertakan isi `portfolio.json` lengkap, token, atau data pribadi lainnya.
+  - type: dropdown
+    id: tool
+    attributes:
+      label: Tool yang bermasalah
+      options:
+        - get_quote
+        - get_history
+        - compare_stocks
+        - get_portfolio
+        - Instalasi / koneksi ke Claude
+        - Lainnya
+    validations:
+      required: true
+  - type: input
+    id: input
+    attributes:
+      label: Input yang dipakai
+      description: Kode saham, range, interval, dll.
+      placeholder: 'get_history ticker="BBCA" range="1y"'
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Yang terjadi
+      description: Tempel output atau pesan error (JSON dari MCP Inspector sangat membantu).
+      render: json
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Yang seharusnya
+      description: Mis. "harga di Bibit/Stockbit saat itu Rp4.820, bukan Rp4.900".
+    validations:
+      required: true
+  - type: input
+    id: when
+    attributes:
+      label: Kapan terjadi (WIB)
+      description: Penting untuk masalah data — pasar buka/tutup memengaruhi hasil.
+      placeholder: "Senin 19 Okt 2026 10:15 WIB"
+  - type: input
+    id: version
+    attributes:
+      label: Versi idx-stock-mcp
+      description: Lihat field "version" di package.json atau `git log -1 --oneline`.
+      placeholder: "1.1.0"
+    validations:
+      required: true
+  - type: dropdown
+    id: client
+    attributes:
+      label: Dipakai di
+      options:
+        - Claude Desktop
+        - Claude Code
+        - MCP Inspector
+        - Lainnya
+  - type: input
+    id: env
+    attributes:
+      label: OS & versi Node.js
+      placeholder: "macOS 15, Node 22.11"
