@@ -3,6 +3,17 @@
 Semua perubahan penting dicatat di sini. Format mengikuti [Keep a Changelog](https://keepachangelog.com/id/1.1.0/),
 versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
+## [Belum dirilis]
+
+### Ditambahkan
+- `YahooClient`: percobaan ulang otomatis dengan backoff eksponensial + jitter saat HTTP 429/5xx atau error jaringan
+  (opsi `maxRetries` default 2, `retryBaseMs` default 500, header `Retry-After` dihormati maksimum 15 detik).
+  404 dan respons bukan JSON tidak diulang. Pesan error setelah gagal menyebut jumlah percobaan.
+- `SECURITY.md`: cara melaporkan celah keamanan, dengan jalur cadangan bila Private vulnerability reporting belum aktif.
+
+### Diubah
+- Jam jeda siang BEI di kode dan README kini merujuk Peraturan BEI II-A (Kep-00157/BEI/10-2026), diverifikasi 19 Okt 2026.
+
 ## [1.1.1] - 2026-10-19
 
 Hasil audit dan tes data live pertama sebelum repo dipublikasikan ([#1](https://github.com/Zalfrie/idx-stock-mcp/issues/1)).

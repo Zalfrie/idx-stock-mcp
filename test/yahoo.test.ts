@@ -195,3 +195,78 @@ test("jeda siang tidak menutupi harga basi: data dari hari sebelumnya tetap dibe
   assert.doesNotMatch(quote.freshnessNote, /jeda siang/);
   assert.match(quote.freshnessNote, /seharusnya buka.*hari libur/);
 });
+
+// ---------- Retry + backoff saat Yahoo 429 / 5xx / error jaringan ----------
+
+function sequencedFetch(responses: (() => Response)[]) {
+  const calls: string[] = [];
+  const impl: FetchLike = async (url) => {
+    const make = responses[Math.min(calls.length, responses.length - 1)];
+    calls.push(url);
+    return make();
+  };
+  return { impl, calls };
+}
+const okResponse = () => new Response(JSON.stringify(chartFixture("BBCA.JK", [5000, 4820])), { status: 200 });
+const tooManyResponse = (retryAfter?: string) =>
+  new Response("", { status: 429, statusText: "Too Many Requests", headers: retryAfter ? { "Retry-After": retryAfter } : {} });
+const noSleep = async () => {};
+
+test("retry: 429 lalu 200 → berhasil dengan 2 panggilan, jeda memakai backoff", async () => {
+  const sleeps: number[] = [];
+  const { impl, calls } = sequencedFetch([tooManyResponse, okResponse]);
+  const client = new YahooClient({ fetchImpl: impl, sleepImpl: async (ms) => { sleeps.push(ms); }, retryBaseMs: 500 });
+  const q = await client.quote("BBCA");
+  assert.equal(q.price, 4820);
+  assert.equal(calls.length, 2);
+  assert.equal(sleeps.length, 1);
+  assert.ok(sleeps[0] >= 500 && sleeps[0] < 1000, `jeda pertama ${sleeps[0]}ms harus di [500, 1000)`);
+});
+
+test("retry: 429 terus → gagal setelah maxRetries+1 panggilan dengan pesan 429", async () => {
+  const { impl, calls } = sequencedFetch([tooManyResponse]);
+  const client = new YahooClient({ fetchImpl: impl, sleepImpl: noSleep, maxRetries: 2 });
+  await assert.rejects(client.quote("BBCA"), /Terlalu banyak permintaan.*429.*3 kali/);
+  assert.equal(calls.length, 3);
+});
+
+test("retry: 404 dan respons bukan JSON tidak di-retry", async () => {
+  const nf = sequencedFetch([() => new Response(JSON.stringify(notFoundFixture()), { status: 404 })]);
+  await assert.rejects(new YahooClient({ fetchImpl: nf.impl, sleepImpl: noSleep }).quote("XXXX"), /tidak ditemukan/);
+  assert.equal(nf.calls.length, 1);
+
+  const html = sequencedFetch([() => new Response("<html>", { status: 200 })]);
+  await assert.rejects(new YahooClient({ fetchImpl: html.impl, sleepImpl: noSleep }).quote("BBCA"), /bukan JSON/);
+  assert.equal(html.calls.length, 1);
+});
+
+test("retry: header Retry-After (detik) dihormati, dibatasi maksimum", async () => {
+  const sleeps: number[] = [];
+  const { impl } = sequencedFetch([() => tooManyResponse("3"), okResponse]);
+  await new YahooClient({ fetchImpl: impl, sleepImpl: async (ms) => { sleeps.push(ms); } }).quote("BBCA");
+  assert.deepEqual(sleeps, [3000]);
+
+  const longSleeps: number[] = [];
+  const long = sequencedFetch([() => tooManyResponse("3600"), okResponse]);
+  await new YahooClient({ fetchImpl: long.impl, sleepImpl: async (ms) => { longSleeps.push(ms); } }).quote("BBCA");
+  assert.ok(longSleeps[0] <= 15_000, `Retry-After 3600 detik harus dibatasi, dapat ${longSleeps[0]}ms`);
+});
+
+test("retry: 5xx dan error jaringan sementara juga di-retry", async () => {
+  let n = 0;
+  const impl: FetchLike = async () => {
+    n++;
+    if (n === 1) throw new TypeError("fetch failed", { cause: { code: "ECONNRESET" } });
+    if (n === 2) return new Response("", { status: 503, statusText: "Service Unavailable" });
+    return okResponse();
+  };
+  const client = new YahooClient({ fetchImpl: impl, sleepImpl: noSleep, maxRetries: 2 });
+  assert.equal((await client.quote("BBCA")).price, 4820);
+  assert.equal(n, 3);
+});
+
+test("retry: maxRetries 0 mematikan retry", async () => {
+  const { impl, calls } = sequencedFetch([tooManyResponse, okResponse]);
+  await assert.rejects(new YahooClient({ fetchImpl: impl, sleepImpl: noSleep, maxRetries: 0 }).quote("BBCA"), /429/);
+  assert.equal(calls.length, 1);
+});

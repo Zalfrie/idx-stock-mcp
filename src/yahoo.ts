@@ -153,7 +153,9 @@ function detectMarketState(meta: any, nowSec: number, gmtOffset: number): Market
 }
 
 /**
- * Jeda siang BEI (perkiraan, dalam zona waktu bursa): Senin–Kamis 12:00–13:30, Jumat 11:30–14:00.
+ * Jeda siang BEI (zona waktu bursa): Senin–Kamis 12:00–13:30, Jumat 11:30–14:00.
+ * Sumber: Peraturan BEI Nomor II-A (Kep-00157/BEI/10-2026), halaman "Jam dan Mekanisme Perdagangan" idx.co.id,
+ * diverifikasi 19 Okt 2026. Jika BEI mengubah jadwal, cukup sesuaikan angka di fungsi ini.
  * Yahoo melaporkan jam reguler 09:00–16:15 tanpa jeda, jadi harus dicek sendiri.
  * Mengembalikan jam pembukaan sesi 2 ("HH:MM") bila sedang jeda, selain itu null.
  */
@@ -303,7 +305,32 @@ export interface YahooClientOptions {
   cacheTtlMs?: number;
   /** Sumber waktu (ms epoch); bisa diganti untuk test. */
   clock?: () => number;
+  /** Jumlah percobaan ulang saat HTTP 429/5xx atau error jaringan. Default 2 (maksimal 3 panggilan). */
+  maxRetries?: number;
+  /** Jeda dasar backoff (ms); dilipatgandakan tiap percobaan, ditambah jitter. Default 500. */
+  retryBaseMs?: number;
+  /** Fungsi tunggu; bisa diganti untuk test agar tidak benar-benar menunggu. */
+  sleepImpl?: (ms: number) => Promise<void>;
 }
+
+/** Batas atas jeda yang dihormati dari header Retry-After, agar tool tidak menggantung terlalu lama. */
+export const MAX_RETRY_AFTER_MS = 15_000;
+
+type FailOutcome = { kind: "fail"; error: Error; retryable: boolean; retryAfterMs: number | null };
+type FetchOutcome = { kind: "ok"; data: ChartResult } | FailOutcome;
+
+const failOutcome = (error: Error, retryable: boolean, retryAfterMs: number | null = null): FailOutcome =>
+  ({ kind: "fail", error, retryable, retryAfterMs });
+
+/** Header Retry-After dalam detik → ms (dibatasi MAX_RETRY_AFTER_MS). Format tanggal HTTP diabaikan. */
+function parseRetryAfter(header: string | null): number | null {
+  if (!header) return null;
+  const seconds = Number(header.trim());
+  if (!Number.isFinite(seconds) || seconds < 0) return null;
+  return Math.min(seconds * 1000, MAX_RETRY_AFTER_MS);
+}
+
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 export class YahooClient {
   private fetchImpl: FetchLike;
@@ -311,6 +338,9 @@ export class YahooClient {
   private timeoutMs: number;
   private cacheTtlMs: number;
   readonly clock: () => number;
+  private maxRetries: number;
+  private retryBaseMs: number;
+  private sleepImpl: (ms: number) => Promise<void>;
   private cache = new Map<string, { at: number; data: ChartResult }>();
 
   constructor(opts: YahooClientOptions = {}) {
@@ -319,6 +349,9 @@ export class YahooClient {
     this.timeoutMs = opts.timeoutMs ?? 10_000;
     this.cacheTtlMs = opts.cacheTtlMs ?? 60_000;
     this.clock = opts.clock ?? (() => Date.now());
+    this.maxRetries = Math.max(0, Math.floor(opts.maxRetries ?? 2));
+    this.retryBaseMs = opts.retryBaseMs ?? 500;
+    this.sleepImpl = opts.sleepImpl ?? defaultSleep;
   }
 
   async chart(tickerInput: string, range: Range = "5d", interval: Interval = "1d"): Promise<ChartResult> {
@@ -330,6 +363,30 @@ export class YahooClient {
     const url =
       `${this.baseUrl}/v8/finance/chart/${encodeURIComponent(symbol)}` +
       `?range=${range}&interval=${interval}&includePrePost=false&events=div%2Csplit`;
+    const attempts = this.maxRetries + 1;
+    let last: FailOutcome | null = null;
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      const outcome = await this.fetchOnce(url, tickerInput);
+      if (outcome.kind === "ok") {
+        this.cache.set(key, { at: this.clock(), data: outcome.data });
+        return outcome.data;
+      }
+      last = outcome;
+      if (!outcome.retryable || attempt === attempts) break;
+      await this.sleepImpl(outcome.retryAfterMs ?? this.backoffMs(attempt));
+    }
+    const err = last ?? failOutcome(new Error("Gagal mengambil data."), false);
+    throw err.retryable && attempts > 1 ? new Error(`${err.error.message} (sudah dicoba ${attempts} kali)`) : err.error;
+  }
+
+  /** Jeda backoff eksponensial dengan jitter: base × 2^(attempt−1) × [1, 1.5). */
+  private backoffMs(attempt: number): number {
+    const base = this.retryBaseMs * 2 ** (attempt - 1);
+    return Math.round(base * (1 + Math.random() * 0.5));
+  }
+
+  /** Satu kali request + parse. Tidak melempar; mengembalikan hasil atau kegagalan beserta apakah layak diulang. */
+  private async fetchOnce(url: string, tickerInput: string): Promise<FetchOutcome> {
     let res: Response;
     try {
       res = await this.fetchImpl(url, {
@@ -337,23 +394,38 @@ export class YahooClient {
         signal: AbortSignal.timeout(this.timeoutMs),
       });
     } catch (e) {
-      throw describeFetchError(e, this.timeoutMs);
+      return failOutcome(describeFetchError(e, this.timeoutMs), true);
     }
-    if (res.status === 404) throw new Error(`Saham "${tickerInput}" tidak ditemukan.`);
+    if (res.status === 404) return failOutcome(new Error(`Saham "${tickerInput}" tidak ditemukan.`), false);
     if (res.status === 429) {
-      throw new Error("Terlalu banyak permintaan ke Yahoo Finance (HTTP 429). Tunggu beberapa menit lalu coba lagi.");
+      return failOutcome(
+        new Error("Terlalu banyak permintaan ke Yahoo Finance (HTTP 429). Tunggu beberapa menit lalu coba lagi."),
+        true,
+        parseRetryAfter(res.headers.get("retry-after")),
+      );
     }
-    if (!res.ok) throw new Error(`Gagal mengambil data (${res.status} ${res.statusText}).`);
+    if (!res.ok) {
+      return failOutcome(
+        new Error(`Gagal mengambil data (${res.status} ${res.statusText}).`),
+        res.status >= 500,
+        parseRetryAfter(res.headers.get("retry-after")),
+      );
+    }
 
     let body: unknown;
     try {
       body = await res.json();
     } catch {
-      throw new Error("Respons Yahoo Finance bukan JSON yang valid; endpoint mungkin berubah atau akses sedang dibatasi.");
+      return failOutcome(
+        new Error("Respons Yahoo Finance bukan JSON yang valid; endpoint mungkin berubah atau akses sedang dibatasi."),
+        false,
+      );
     }
-    const data = parseChart(body, { now: this.clock() });
-    this.cache.set(key, { at: this.clock(), data });
-    return data;
+    try {
+      return { kind: "ok", data: parseChart(body, { now: this.clock() }) };
+    } catch (e) {
+      return failOutcome(e instanceof Error ? e : new Error(String(e)), false);
+    }
   }
 
   async quote(tickerInput: string): Promise<Quote> {

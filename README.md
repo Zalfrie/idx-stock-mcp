@@ -218,7 +218,7 @@ Mengembalikan: `price`, `previousClose` (+ `previousCloseSource`), `change`, `ch
 | `marketState` | `open`, `closed`, atau `unknown` (jam bursa tapi status tidak bisa dipastikan, mis. kemungkinan hari libur). |
 | `dataAsOfLocal` | Waktu harga terakhir dalam WIB, mis. `Jum, 16 Okt 2026 16:00 WIB`. |
 | `dataAgeMinutes` | Umur data dalam menit. |
-| `freshnessNote` | Kalimat penjelasan yang disampaikan Claude ke pengguna. Saat **jeda siang** BEI (Sen–Kam 12:00–13:30, Jum 11:30–14:00 WIB) `marketState` tetap `open`, tetapi catatan ini menyebut harga adalah penutupan sesi 1 dan jam pembukaan sesi 2. Di luar jeda, ada peringatan jika pasar seharusnya buka tapi harga tidak bergerak lebih dari 30 menit. |
+| `freshnessNote` | Kalimat penjelasan yang disampaikan Claude ke pengguna. Saat **jeda siang** BEI (Sen–Kam 12:00–13:30, Jum 11:30–14:00 WIB, sesuai [jam perdagangan resmi BEI](https://www.idx.co.id/id/produk/mekanisme-dan-jam-perdagangan)) `marketState` tetap `open`, tetapi catatan ini menyebut harga adalah penutupan sesi 1 dan jam pembukaan sesi 2. Di luar jeda, ada peringatan jika pasar seharusnya buka tapi harga tidak bergerak lebih dari 30 menit. |
 
 ### `get_history`
 | Parameter | Tipe | Default | Pilihan |
@@ -277,7 +277,7 @@ Aturan integritas:
 | `File portofolio tidak ditemukan` | Path di `IDX_PORTFOLIO_PATH` salah. Gunakan path lengkap (absolut), bukan `./portfolio.json`. |
 | `Format portofolio tidak valid` | Periksa nama field dan tipe datanya (angka tanpa tanda kutip, tanpa titik ribuan: `4820`, bukan `"4.820"`). |
 | `Saham "XXXX" tidak ditemukan` | Kode saham salah atau sudah delisting. Cek kode di <https://www.idx.co.id>. |
-| `Terlalu banyak permintaan ke Yahoo Finance (HTTP 429)` | Terlalu banyak request ke Yahoo. Tunggu beberapa menit. |
+| `Terlalu banyak permintaan ke Yahoo Finance (HTTP 429) ... (sudah dicoba 3 kali)` | Yahoo membatasi akses dan 2 percobaan ulang otomatis masih gagal. Tunggu beberapa menit. |
 | `Tidak dapat terhubung ke Yahoo Finance (ENOTFOUND / ECONNRESET / ...)` | Komputer tidak bisa mencapai Yahoo. Periksa koneksi internet, VPN, atau firewall. |
 | `Yahoo Finance tidak merespons dalam 10 detik` | Jaringan lambat atau Yahoo sedang bermasalah. Coba lagi beberapa saat. |
 | `Respons Yahoo Finance bukan JSON yang valid` | Yahoo membalas halaman HTML (mis. halaman persetujuan atau pembatasan akses). Coba lagi nanti; jika terus terjadi, [laporkan](https://github.com/Zalfrie/idx-stock-mcp/issues/new/choose) karena endpoint mungkin berubah. |
@@ -289,6 +289,8 @@ Aturan integritas:
 
 - Harga diambil dari endpoint chart **Yahoo Finance** (simbol berakhiran `.JK`, IHSG = `^JKSE`). Endpoint ini **tidak resmi**: bisa berubah atau dibatasi tanpa pemberitahuan, dan harga bisa tertunda dari bursa. Pastikan penggunaan sesuai ketentuan layanan Yahoo.
 - Respons di-cache 60 detik untuk mengurangi jumlah request.
+- Jika Yahoo membalas HTTP 429/5xx atau koneksi gagal sementara, server **mencoba ulang otomatis** sampai 2 kali
+  (jeda 0,5 detik lalu 1 detik, atau sesuai header `Retry-After`, maksimum 15 detik). Error 404 dan respons bukan JSON tidak diulang.
 - Reksa dana tidak tersedia di sumber data ini, jadi nilainya diisi manual di file portofolio.
 - Kode sumber data terisolasi di `src/yahoo.ts`, sehingga mudah diganti dengan penyedia data berlisensi bila diperlukan.
 

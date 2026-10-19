@@ -6,7 +6,7 @@ Terima kasih sudah tertarik berkontribusi!
 
 - **Bug / data salah:** buka issue dengan template **Laporan bug**. Sertakan input, output (JSON), dan waktu kejadian dalam WIB.
 - **Ide fitur:** gunakan template **Usulan fitur**.
-- **Celah keamanan:** jangan dibuka sebagai issue publik. Hubungi maintainer lewat [GitHub Security Advisories](../../security/advisories/new).
+- **Celah keamanan:** jangan dibuka sebagai issue publik. Ikuti [SECURITY.md](SECURITY.md).
 
 Jangan pernah menempel isi `portfolio.json` lengkap, token, atau data pribadi di issue.
 

@@ -19,7 +19,7 @@ const defaultBodies = {
 
 async function connect(opts: { portfolioPath?: string; bodies?: Record<string, unknown>; failing?: string[] } = {}) {
   const { impl } = fakeFetch(opts.bodies ?? defaultBodies, opts.failing ?? []);
-  const yahoo = new YahooClient({ fetchImpl: impl, clock: () => NOW_MS });
+  const yahoo = new YahooClient({ fetchImpl: impl, clock: () => NOW_MS, sleepImpl: async () => {} });
   const server = createServer({ client: yahoo, portfolioPath: opts.portfolioPath });
   const client = new Client({ name: "test", version: "0.0.0" });
   const [a, b] = InMemoryTransport.createLinkedPair();
