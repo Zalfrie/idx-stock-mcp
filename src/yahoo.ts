@@ -48,7 +48,8 @@ export interface Quote {
   dayLow: number | null;
   fiftyTwoWeekHigh: number | null;
   fiftyTwoWeekLow: number | null;
-  pricePerLot: number; // 1 lot = 100 lembar
+  /** Harga 1 lot (100 lembar). null untuk indeks, karena indeks tidak diperdagangkan per lot. */
+  pricePerLot: number | null;
   /** Waktu harga terakhir (ISO, UTC). */
   dataAsOf: string | null;
   /** Waktu harga terakhir dalam WIB, mudah dibaca. */
@@ -151,10 +152,33 @@ function detectMarketState(meta: any, nowSec: number, gmtOffset: number): Market
   return "unknown"; // jam bursa, tapi tanpa data resmi tidak bisa memastikan (bisa hari libur)
 }
 
-function buildFreshnessNote(state: MarketState, local: string | null, ageMin: number | null): string {
+/**
+ * Jeda siang BEI (perkiraan, dalam zona waktu bursa): Senin–Kamis 12:00–13:30, Jumat 11:30–14:00.
+ * Yahoo melaporkan jam reguler 09:00–16:15 tanpa jeda, jadi harus dicek sendiri.
+ * Mengembalikan jam pembukaan sesi 2 ("HH:MM") bila sedang jeda, selain itu null.
+ */
+function lunchBreakResumeAt(nowSec: number, gmtOffset: number): string | null {
+  const local = new Date((nowSec + gmtOffset) * 1000);
+  const day = local.getUTCDay();
+  const minutes = local.getUTCHours() * 60 + local.getUTCMinutes();
+  if (day === 5) return minutes >= 11 * 60 + 30 && minutes < 14 * 60 ? "14:00" : null;
+  if (day >= 1 && day <= 4) return minutes >= 12 * 60 && minutes < 13 * 60 + 30 ? "13:30" : null;
+  return null;
+}
+
+function buildFreshnessNote(
+  state: MarketState,
+  local: string | null,
+  ageMin: number | null,
+  lunchResumeAt: string | null,
+  tzLabel: string,
+): string {
   if (!local) return "Waktu data tidak tersedia; perlakukan harga sebagai perkiraan.";
   if (state === "closed") return `Pasar sedang tutup. Harga adalah penutupan terakhir per ${local}.`;
   if (state === "open") {
+    if (lunchResumeAt) {
+      return `Pasar sedang jeda siang; harga terakhir per ${local} adalah penutupan sesi 1. Sesi 2 dibuka pukul ${lunchResumeAt} ${tzLabel}.`;
+    }
     if (ageMin !== null && ageMin > STALE_WHILE_OPEN_MINUTES) {
       return `Pasar seharusnya buka, tetapi harga terakhir per ${local} (${ageMin} menit lalu). Bisa jadi hari libur bursa, saham disuspensi, atau data tertunda.`;
     }
@@ -239,6 +263,10 @@ export function parseChart(json: any, opts: ParseOptions = {}): ChartResult {
   const marketState = detectMarketState(meta, nowSec, gmtOffset);
   const dataAgeMinutes = marketTime !== null ? Math.max(0, Math.round((nowSec - marketTime) / 60)) : null;
   const dataAsOfLocal = marketTime !== null ? formatLocal(marketTime, gmtOffset, tzLabel) : null;
+  // Catatan jeda siang hanya berlaku bila harga terakhir memang dari hari ini; jika tidak, biarkan peringatan harga basi.
+  const priceIsToday = marketDate !== null && marketDate === toDateString(nowSec, gmtOffset);
+  const lunchResumeAt = marketState === "open" && priceIsToday ? lunchBreakResumeAt(nowSec, gmtOffset) : null;
+  const isIndex = meta.instrumentType === "INDEX" || String(meta.symbol ?? "").startsWith("^");
 
   return {
     quote: {
@@ -255,12 +283,12 @@ export function parseChart(json: any, opts: ParseOptions = {}): ChartResult {
       dayLow: num(meta.regularMarketDayLow),
       fiftyTwoWeekHigh: num(meta.fiftyTwoWeekHigh),
       fiftyTwoWeekLow: num(meta.fiftyTwoWeekLow),
-      pricePerLot: price * LOT_SIZE,
+      pricePerLot: isIndex ? null : price * LOT_SIZE,
       dataAsOf: marketTime !== null ? new Date(marketTime * 1000).toISOString() : null,
       dataAsOfLocal,
       dataAgeMinutes,
       marketState,
-      freshnessNote: buildFreshnessNote(marketState, dataAsOfLocal, dataAgeMinutes),
+      freshnessNote: buildFreshnessNote(marketState, dataAsOfLocal, dataAgeMinutes, lunchResumeAt, tzLabel),
     },
     candles,
     dividends,
@@ -302,14 +330,28 @@ export class YahooClient {
     const url =
       `${this.baseUrl}/v8/finance/chart/${encodeURIComponent(symbol)}` +
       `?range=${range}&interval=${interval}&includePrePost=false&events=div%2Csplit`;
-    const res = await this.fetchImpl(url, {
-      headers: { "User-Agent": "Mozilla/5.0 (idx-stock-mcp)", Accept: "application/json" },
-      signal: AbortSignal.timeout(this.timeoutMs),
-    });
+    let res: Response;
+    try {
+      res = await this.fetchImpl(url, {
+        headers: { "User-Agent": "Mozilla/5.0 (idx-stock-mcp)", Accept: "application/json" },
+        signal: AbortSignal.timeout(this.timeoutMs),
+      });
+    } catch (e) {
+      throw describeFetchError(e, this.timeoutMs);
+    }
     if (res.status === 404) throw new Error(`Saham "${tickerInput}" tidak ditemukan.`);
+    if (res.status === 429) {
+      throw new Error("Terlalu banyak permintaan ke Yahoo Finance (HTTP 429). Tunggu beberapa menit lalu coba lagi.");
+    }
     if (!res.ok) throw new Error(`Gagal mengambil data (${res.status} ${res.statusText}).`);
 
-    const data = parseChart(await res.json(), { now: this.clock() });
+    let body: unknown;
+    try {
+      body = await res.json();
+    } catch {
+      throw new Error("Respons Yahoo Finance bukan JSON yang valid; endpoint mungkin berubah atau akses sedang dibatasi.");
+    }
+    const data = parseChart(body, { now: this.clock() });
     this.cache.set(key, { at: this.clock(), data });
     return data;
   }
@@ -317,4 +359,18 @@ export class YahooClient {
   async quote(tickerInput: string): Promise<Quote> {
     return (await this.chart(tickerInput, "5d", "1d")).quote;
   }
+}
+
+/** Ubah error fetch (DNS, koneksi, timeout) menjadi pesan Bahasa Indonesia yang bisa ditindaklanjuti. */
+function describeFetchError(e: unknown, timeoutMs: number): Error {
+  const name = e instanceof Error ? e.name : "";
+  if (name === "TimeoutError" || name === "AbortError") {
+    return new Error(`Yahoo Finance tidak merespons dalam ${timeoutMs / 1000} detik. Coba lagi beberapa saat.`);
+  }
+  const cause = e instanceof Error ? (e.cause as { code?: unknown; message?: unknown } | undefined) : undefined;
+  const reason =
+    (typeof cause?.code === "string" && cause.code) ||
+    (typeof cause?.message === "string" && cause.message) ||
+    (e instanceof Error ? e.message : String(e));
+  return new Error(`Tidak dapat terhubung ke Yahoo Finance (${reason}). Periksa koneksi internet.`);
 }

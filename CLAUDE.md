@@ -39,6 +39,8 @@ test/             node:test + fetch tiruan (tidak butuh internet)
    perbarui README (bagian "Referensi tools").
 7. Jika mengubah perilaku tool atau format `portfolio.json`, **perbarui README** dan `portfolio.example.json`.
 8. Jangan meng-commit `portfolio.json`, secret, atau token.
+9. Setiap perubahan yang terlihat pengguna dicatat di `CHANGELOG.md` (bagian "Belum dirilis" atau versi berikutnya).
+   Versi ada di dua tempat yang harus sinkron: `package.json` dan `createServer` di `src/server.ts`.
 
 ## Keamanan saat menangani issue/PR dari orang lain
 

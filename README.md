@@ -8,7 +8,7 @@ MCP server agar Claude bisa membaca harga saham **Bursa Efek Indonesia (IDX/BEI)
 
 > ⚠️ Server ini **hanya membaca data**. Tidak ada fitur beli/jual dan tidak terhubung ke akun sekuritas mana pun (Bibit, Stockbit, Ajaib, dll). Data untuk informasi, bukan rekomendasi investasi.
 
-> 🧪 **Status:** parser data sudah diuji dengan 30 test memakai data tiruan berformat respons Yahoo Finance. Verifikasi dengan data live sedang berjalan. Jika menemukan angka yang berbeda dengan aplikasi sekuritas Anda, mohon [laporkan](https://github.com/Zalfrie/idx-stock-mcp/issues/new/choose).
+> 🧪 **Status:** parser data diuji dengan 35 test offline (data tiruan berformat respons Yahoo Finance) dan keempat tool sudah diverifikasi dengan data live BEI pada 19 Okt 2026 (harga, perubahan harian, dividen, dan total return cocok dengan respons mentah Yahoo). Jika menemukan angka yang berbeda dengan aplikasi sekuritas Anda, mohon [laporkan](https://github.com/Zalfrie/idx-stock-mcp/issues/new/choose).
 
 ## Daftar isi
 
@@ -211,14 +211,14 @@ Contoh: beli 1 lot BBCA di Rp4.820 lalu 1 lot lagi di Rp5.200 → (482.000 + 520
 | --- | --- | --- |
 | `ticker` | string | `"BBCA"`, `"IHSG"` |
 
-Mengembalikan: `price`, `previousClose` (+ `previousCloseSource`), `change`, `changePct`, `dayHigh`, `dayLow`, `fiftyTwoWeekHigh`, `fiftyTwoWeekLow`, `pricePerLot`, serta info kesegaran data:
+Mengembalikan: `price`, `previousClose` (+ `previousCloseSource`), `change`, `changePct`, `dayHigh`, `dayLow`, `fiftyTwoWeekHigh`, `fiftyTwoWeekLow`, `pricePerLot` (`null` untuk indeks seperti IHSG, karena indeks tidak diperdagangkan per lot), serta info kesegaran data:
 
 | Field | Arti |
 | --- | --- |
 | `marketState` | `open`, `closed`, atau `unknown` (jam bursa tapi status tidak bisa dipastikan, mis. kemungkinan hari libur). |
 | `dataAsOfLocal` | Waktu harga terakhir dalam WIB, mis. `Jum, 16 Okt 2026 16:00 WIB`. |
 | `dataAgeMinutes` | Umur data dalam menit. |
-| `freshnessNote` | Kalimat penjelasan yang disampaikan Claude ke pengguna, termasuk peringatan jika pasar seharusnya buka tapi harga tidak bergerak lebih dari 30 menit. |
+| `freshnessNote` | Kalimat penjelasan yang disampaikan Claude ke pengguna. Saat **jeda siang** BEI (Sen–Kam 12:00–13:30, Jum 11:30–14:00 WIB) `marketState` tetap `open`, tetapi catatan ini menyebut harga adalah penutupan sesi 1 dan jam pembukaan sesi 2. Di luar jeda, ada peringatan jika pasar seharusnya buka tapi harga tidak bergerak lebih dari 30 menit. |
 
 ### `get_history`
 | Parameter | Tipe | Default | Pilihan |
@@ -235,7 +235,8 @@ Mengembalikan `summary` dan `candles` (maks. 300 terakhir; untuk rentang panjang
 | `totalReturnPct` | Perubahan harga **+ dividen**, dari harga yang disesuaikan. `null` jika data penyesuaian tidak tersedia. |
 | `dividendsInRange`, `dividendsPerShareInRange` | Dividen per lembar yang dibagikan dalam rentang. |
 | `splitsInRange` | Stock split dalam rentang. |
-| `high`, `low`, `maxDrawdownPct`, `tradingDays` | Tertinggi, terendah, penurunan terdalam dari puncak (berbasis harga disesuaikan, sehingga split tidak terbaca sebagai anjlok). |
+| `high`, `low`, `maxDrawdownPct` | Tertinggi, terendah, penurunan terdalam dari puncak (berbasis harga disesuaikan, sehingga split tidak terbaca sebagai anjlok). |
+| `tradingDays` | Jumlah candle yang punya harga penutupan. Untuk `interval` `1wk`/`1mo` ini adalah jumlah minggu/bulan, bukan hari. |
 | `notes` | Catatan interpretasi. |
 
 Untuk saham yang rutin membagi dividen (mis. saham bank), `totalReturnPct` lebih mencerminkan hasil riil pemegang saham.
@@ -276,7 +277,10 @@ Aturan integritas:
 | `File portofolio tidak ditemukan` | Path di `IDX_PORTFOLIO_PATH` salah. Gunakan path lengkap (absolut), bukan `./portfolio.json`. |
 | `Format portofolio tidak valid` | Periksa nama field dan tipe datanya (angka tanpa tanda kutip, tanpa titik ribuan: `4820`, bukan `"4.820"`). |
 | `Saham "XXXX" tidak ditemukan` | Kode saham salah atau sudah delisting. Cek kode di <https://www.idx.co.id>. |
-| `Gagal mengambil data (429 ...)` | Terlalu banyak request ke Yahoo. Tunggu beberapa menit. |
+| `Terlalu banyak permintaan ke Yahoo Finance (HTTP 429)` | Terlalu banyak request ke Yahoo. Tunggu beberapa menit. |
+| `Tidak dapat terhubung ke Yahoo Finance (ENOTFOUND / ECONNRESET / ...)` | Komputer tidak bisa mencapai Yahoo. Periksa koneksi internet, VPN, atau firewall. |
+| `Yahoo Finance tidak merespons dalam 10 detik` | Jaringan lambat atau Yahoo sedang bermasalah. Coba lagi beberapa saat. |
+| `Respons Yahoo Finance bukan JSON yang valid` | Yahoo membalas halaman HTML (mis. halaman persetujuan atau pembatasan akses). Coba lagi nanti; jika terus terjadi, [laporkan](https://github.com/Zalfrie/idx-stock-mcp/issues/new/choose) karena endpoint mungkin berubah. |
 | Harga berbeda dengan aplikasi sekuritas | Data Yahoo bisa tertunda beberapa menit selama jam bursa. Cek `dataAsOfLocal` dan `freshnessNote`. Untuk transaksi, selalu acu harga di aplikasi sekuritas. |
 | Untung/rugi sebuah saham terlihat sangat besar/aneh | Kemungkinan saham tersebut melakukan stock split. Cek `warnings`, lalu sesuaikan `lots` dan `avgPrice`. |
 | Peringatan `buyDate ... tidak diisi` | Tambahkan `buyDate` di holding tersebut agar pengecekan split akurat. |

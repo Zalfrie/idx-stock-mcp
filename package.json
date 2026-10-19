@@ -1,32 +1,19 @@
 {
   "name": "idx-stock-mcp",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "MCP server untuk data saham Bursa Efek Indonesia (IDX) dan portofolio pribadi",
-  "main": "dist/index.js",
-  "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "start": "node dist/index.js",
-    "test": "tsc -p tsconfig.test.json && node --test dist-test/test/*.test.js",
-    "inspect": "npx @modelcontextprotocol/inspector node dist/index.js"
-  },
-  "keywords": [
-    "mcp",
-    "idx",
-    "saham",
-    "bei",
-    "claude"
-  ],
-  "author": "",
+  "author": "Zalfrie",
   "license": "MIT",
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.32.1",
-    "zod": "^4.6.7"
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Zalfrie/idx-stock-mcp.git"
   },
-  "devDependencies": {
-    "@types/node": "^26.6.5",
-    "typescript": "^7.0.2"
+  "bugs": {
+    "url": "https://github.com/Zalfrie/idx-stock-mcp/issues"
   },
+  "homepage": "https://github.com/Zalfrie/idx-stock-mcp#readme",
   "type": "module",
+  "main": "dist/index.js",
   "bin": {
     "idx-stock-mcp": "dist/index.js"
   },
@@ -34,10 +21,35 @@
     "LICENSE",
     "dist",
     "portfolio.example.json",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md"
   ],
   "engines": {
     "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "tsc -p tsconfig.test.json && node --test dist-test/test/yahoo.test.js dist-test/test/summary.test.js dist-test/test/server.test.js",
+    "inspect": "npx @modelcontextprotocol/inspector node dist/index.js"
+  },
+  "keywords": [
+    "mcp",
+    "idx",
+    "saham",
+    "bei",
+    "claude",
+    "bursa-efek-indonesia",
+    "mcp-server",
+    "yahoo-finance"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
   },
   "private": true
 }

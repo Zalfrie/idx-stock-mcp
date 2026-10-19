@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { normalizeTicker, parseChart, YahooClient } from "../src/yahoo.js";
+import { normalizeTicker, parseChart, YahooClient, type FetchLike } from "../src/yahoo.js";
 import { chartFixture, DAY, fakeFetch, MON_19_OCT_0900_WIB, notFoundFixture } from "./fixtures.js";
 
 const MON_1000_WIB_MS = (MON_19_OCT_0900_WIB + 3600) * 1000;
@@ -130,4 +130,68 @@ test("YahooClient: saham tidak dikenal menghasilkan error 'tidak ditemukan'", as
   const { impl } = fakeFetch({});
   const client = new YahooClient({ fetchImpl: impl });
   await assert.rejects(client.quote("XXXX"), /tidak ditemukan/);
+});
+
+// ---------- Issue #1: indeks tidak diperdagangkan per lot ----------
+
+test("pricePerLot null untuk indeks, tetap terisi untuk saham", () => {
+  const idx = parseChart(chartFixture("^JKSE", [5185.1, 4996.6])).quote;
+  assert.equal(idx.pricePerLot, null);
+  const stock = parseChart(chartFixture("BBCA.JK", [5000, 4820])).quote;
+  assert.equal(stock.pricePerLot, 482000);
+});
+
+// ---------- Issue #1: jeda siang BEI ----------
+
+test("jeda siang Senin–Kamis: status tetap open, catatan menyebut jeda siang (bukan hari libur)", () => {
+  const MON_1230_WIB_MS = (MON_19_OCT_0900_WIB + 3.5 * 3600) * 1000;
+  // Harga terakhir 11:59 WIB (akhir sesi 1); sekarang 12:30 → umur data 31 menit.
+  const fx = chartFixture("BBCA.JK", [5000, 4820], { marketTime: MON_19_OCT_0900_WIB + 3 * 3600 - 60 });
+  const { quote } = parseChart(fx, { now: MON_1230_WIB_MS });
+  assert.equal(quote.marketState, "open");
+  assert.match(quote.freshnessNote, /jeda siang.*13:30 WIB/);
+  assert.doesNotMatch(quote.freshnessNote, /hari libur/);
+});
+
+test("jeda siang Jumat 11:30–14:00; setelah jeda kembali 'Pasar sedang buka'", () => {
+  const fri = MON_19_OCT_0900_WIB - 3 * DAY;
+  const friFx = chartFixture("BBCA.JK", [5000, 4820], {
+    lastCandleTs: fri,
+    marketTime: fri + 2.5 * 3600, // Jumat 11:30
+    tradingPeriod: { start: fri, end: fri + 7 * 3600 },
+  });
+  const atBreak = parseChart(friFx, { now: (fri + 3 * 3600) * 1000 }).quote; // Jumat 12:00
+  assert.match(atBreak.freshnessNote, /jeda siang.*14:00 WIB/);
+
+  const monTs = MON_19_OCT_0900_WIB + 4.75 * 3600; // Senin 13:45
+  const after = parseChart(chartFixture("BBCA.JK", [5000, 4820], { marketTime: monTs }), { now: (monTs + 60) * 1000 }).quote;
+  assert.match(after.freshnessNote, /Pasar sedang buka/);
+});
+
+// ---------- Issue #1: pesan error jaringan dalam Bahasa Indonesia ----------
+
+test("YahooClient: error jaringan, timeout, respons bukan JSON, dan 429 diberi pesan jelas", async () => {
+  const mk = (fetchImpl: FetchLike) => new YahooClient({ fetchImpl, timeoutMs: 10_000 });
+  await assert.rejects(
+    mk(async () => { throw new TypeError("fetch failed", { cause: { code: "ENOTFOUND" } }); }).quote("BBCA"),
+    /Tidak dapat terhubung ke Yahoo Finance \(ENOTFOUND\)/,
+  );
+  await assert.rejects(
+    mk(async () => { throw new DOMException("The operation was aborted due to timeout", "TimeoutError"); }).quote("BBCA"),
+    /tidak merespons dalam 10 detik/,
+  );
+  await assert.rejects(mk(async () => new Response("<html>consent</html>", { status: 200 })).quote("BBCA"), /bukan JSON/);
+  await assert.rejects(
+    mk(async () => new Response("", { status: 429, statusText: "Too Many Requests" })).quote("BBCA"),
+    /Terlalu banyak permintaan.*429/,
+  );
+});
+
+test("jeda siang tidak menutupi harga basi: data dari hari sebelumnya tetap diberi peringatan", () => {
+  const fri = MON_19_OCT_0900_WIB - 3 * DAY;
+  const fx = chartFixture("BBCA.JK", [5000, 4820], { lastCandleTs: fri, marketTime: fri + 7 * 3600 }); // Jumat 16:00
+  const { quote } = parseChart(fx, { now: (MON_19_OCT_0900_WIB + 3.5 * 3600) * 1000 }); // Senin 12:30
+  assert.equal(quote.marketState, "open");
+  assert.doesNotMatch(quote.freshnessNote, /jeda siang/);
+  assert.match(quote.freshnessNote, /seharusnya buka.*hari libur/);
 });

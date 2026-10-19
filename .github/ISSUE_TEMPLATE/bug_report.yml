@@ -53,7 +53,7 @@ body:
     attributes:
       label: Versi idx-stock-mcp
       description: Lihat field "version" di package.json atau `git log -1 --oneline`.
-      placeholder: "1.1.0"
+      placeholder: "1.1.1"
     validations:
       required: true
   - type: dropdown
