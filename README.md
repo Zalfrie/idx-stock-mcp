@@ -147,8 +147,8 @@ Tips:
 {
   "sellFeePct": 0.25,
   "holdings": [
-    { "ticker": "BBCA", "lots": 1, "avgPrice": 4820, "note": "beli pertama" },
-    { "ticker": "BBRI", "lots": 2, "avgPrice": 3500 }
+    { "ticker": "BBCA", "lots": 1, "avgPrice": 4820, "buyDate": "2026-10-19", "note": "beli pertama" },
+    { "ticker": "BBRI", "lots": 2, "avgPrice": 3500, "buyDate": "2026-10-20" }
   ],
   "manual": [
     { "name": "Reksa dana indeks IDX30 (Bibit)", "invested": 500000, "currentValue": 512000, "updatedAt": "2026-10-19" }
@@ -158,12 +158,16 @@ Tips:
 
 | Field | Keterangan |
 | --- | --- |
-| `sellFeePct` | Fee jual broker dalam persen (default `0.25`). Dipakai untuk estimasi hasil bersih jika dijual. Sesuaikan dengan tarif sekuritas Anda. |
+| `sellFeePct` | Fee jual dalam persen, termasuk pajak penjualan (default `0.25`). Hanya untuk **estimasi** hasil bersih jika dijual. Sesuaikan dengan tarif sekuritas Anda. |
+| `manualStaleDays` | Setelah berapa hari nilai aset `manual` dianggap usang dan diberi peringatan (default `7`). |
 | `holdings[].ticker` | Kode saham BEI, mis. `BBCA`. |
 | `holdings[].lots` | Jumlah lot (1 lot = 100 lembar). |
-| `holdings[].avgPrice` | Harga rata-rata beli **per lembar**. Kalau membeli beberapa kali di harga berbeda, hitung rata-ratanya (lihat di bawah). |
+| `holdings[].avgPrice` | Harga rata-rata beli **per lembar**. Fee beli tidak dihitung terpisah; masukkan ke `avgPrice` jika ingin modal akurat. Kalau membeli beberapa kali, hitung rata-ratanya (lihat di bawah). |
+| `holdings[].buyDate` | Tanggal beli `YYYY-MM-DD` (disarankan). Dipakai untuk mendeteksi stock split setelah Anda membeli. |
 | `holdings[].note` | Catatan bebas (opsional). |
-| `manual[]` | Aset yang tidak diperdagangkan di bursa, mis. reksa dana. `invested` = total modal, `currentValue` = nilai terkini dari aplikasi. |
+| `manual[]` | Aset yang tidak diperdagangkan di bursa, mis. reksa dana. `invested` = total modal, `currentValue` = nilai terkini dari aplikasi, `updatedAt` = tanggal Anda terakhir memperbarui `currentValue`. |
+
+**Kalau saham Anda melakukan stock split**, misalnya 1 lembar menjadi 5 (5:1), jumlah lot dan `avgPrice` di file portofolio **tidak berubah otomatis**. Sesuaikan manual: `lots × 5` dan `avgPrice ÷ 5`. Server akan memberi peringatan jika mendeteksi split setelah `buyDate`.
 
 **Menghitung `avgPrice` jika membeli beberapa kali:**
 
@@ -180,7 +184,14 @@ Contoh: beli 1 lot BBCA di Rp4.820 lalu 1 lot lagi di Rp5.200 → (482.000 + 520
 | --- | --- | --- |
 | `ticker` | string | `"BBCA"`, `"IHSG"` |
 
-Mengembalikan: `price`, `previousClose`, `change`, `changePct`, `dayHigh`, `dayLow`, `fiftyTwoWeekHigh`, `fiftyTwoWeekLow`, `pricePerLot`, `marketTime`.
+Mengembalikan: `price`, `previousClose` (+ `previousCloseSource`), `change`, `changePct`, `dayHigh`, `dayLow`, `fiftyTwoWeekHigh`, `fiftyTwoWeekLow`, `pricePerLot`, serta info kesegaran data:
+
+| Field | Arti |
+| --- | --- |
+| `marketState` | `open`, `closed`, atau `unknown` (jam bursa tapi status tidak bisa dipastikan, mis. kemungkinan hari libur). |
+| `dataAsOfLocal` | Waktu harga terakhir dalam WIB, mis. `Jum, 16 Okt 2026 16:00 WIB`. |
+| `dataAgeMinutes` | Umur data dalam menit. |
+| `freshnessNote` | Kalimat penjelasan yang disampaikan Claude ke pengguna, termasuk peringatan jika pasar seharusnya buka tapi harga tidak bergerak lebih dari 30 menit. |
 
 ### `get_history`
 | Parameter | Tipe | Default | Pilihan |
@@ -189,7 +200,18 @@ Mengembalikan: `price`, `previousClose`, `change`, `changePct`, `dayHigh`, `dayL
 | `range` | string | `"6mo"` | `1d` `5d` `1mo` `3mo` `6mo` `1y` `2y` `5y` `10y` `ytd` `max` |
 | `interval` | string | `"1d"` | `1d` `1wk` `1mo` |
 
-Mengembalikan: `summary` (`returnPct`, `high`, `low`, `maxDrawdownPct`, `tradingDays`) dan `candles` (maks. 300 terakhir). Untuk rentang panjang gunakan `1wk` atau `1mo`.
+Mengembalikan `summary` dan `candles` (maks. 300 terakhir; untuk rentang panjang gunakan `1wk` atau `1mo`). Isi `summary`:
+
+| Field | Arti |
+| --- | --- |
+| `priceReturnPct` | Perubahan **harga saja**, tanpa dividen. |
+| `totalReturnPct` | Perubahan harga **+ dividen**, dari harga yang disesuaikan. `null` jika data penyesuaian tidak tersedia. |
+| `dividendsInRange`, `dividendsPerShareInRange` | Dividen per lembar yang dibagikan dalam rentang. |
+| `splitsInRange` | Stock split dalam rentang. |
+| `high`, `low`, `maxDrawdownPct`, `tradingDays` | Tertinggi, terendah, penurunan terdalam dari puncak (berbasis harga disesuaikan, sehingga split tidak terbaca sebagai anjlok). |
+| `notes` | Catatan interpretasi. |
+
+Untuk saham yang rutin membagi dividen (mis. saham bank), `totalReturnPct` lebih mencerminkan hasil riil pemegang saham.
 
 ### `compare_stocks`
 | Parameter | Tipe | Default |
@@ -197,10 +219,25 @@ Mengembalikan: `summary` (`returnPct`, `high`, `low`, `maxDrawdownPct`, `trading
 | `tickers` | string[] (2–10) | — |
 | `range` | string | `"6mo"` |
 
-Hasil diurutkan dari return tertinggi. Ticker yang gagal tetap muncul dengan field `error`.
+Diurutkan berdasarkan `totalReturnPct` jika tersedia untuk semua saham; jika tidak, berdasarkan `priceReturnPct`. Dasar pengurutan tercantum di field `rankedBy`. Ticker yang gagal tetap muncul dengan field `error`.
 
 ### `get_portfolio`
-Tanpa parameter. Membaca file dari environment variable `IDX_PORTFOLIO_PATH`. Mengembalikan rincian per saham (`marketValue`, `unrealizedPnl`, `unrealizedPnlPct`, `estNetIfSold`, `dayChangePct`) dan `totals`. Jika harga sebuah saham gagal diambil, `totals.incomplete` bernilai `true`.
+Tanpa parameter. Membaca file dari environment variable `IDX_PORTFOLIO_PATH`.
+
+| Bagian | Isi |
+| --- | --- |
+| `holdings[]` | Per saham: `status` (`priced`/`unpriced`), `lastPrice`, `priceAsOf`, `marketState`, `marketValue`, `unrealizedPnl`, `unrealizedPnlPct`, `estimatedNetIfSold`, `dayChangePct`, `warnings`. |
+| `manual[]` | Aset manual + `pnl` dan `stale` (usang atau tidak). |
+| `totals` | `cost`, `marketValue`, `unrealizedPnl`, `unrealizedPnlPct`, `estimatedNetIfSold`, `incomplete`, `excludedTickers`, `excludedCost`. |
+| `assumptions` | Asumsi perhitungan: fee jual, perlakuan fee beli, ukuran lot. |
+| `warnings` | Peringatan yang harus disampaikan ke pengguna. |
+
+Aturan integritas:
+
+- **Saham yang harganya gagal diambil tidak ikut dihitung** dalam `totals` (bukan dianggap impas). Saham tersebut tercantum di `excludedTickers`, dan peringatan "Total TIDAK LENGKAP" muncul di urutan pertama `warnings`.
+- **Stock split** setelah `buyDate` dideteksi dan diberi peringatan per saham.
+- **Aset manual** yang `updatedAt`-nya lebih lama dari `manualStaleDays`, atau tidak punya `updatedAt`, diberi peringatan.
+- `estimatedNetIfSold` = nilai pasar − `sellFeePct`. Ini **perkiraan**; hasil jual sebenarnya tergantung harga eksekusi dan tarif sekuritas.
 
 ## Troubleshooting
 
@@ -213,7 +250,9 @@ Tanpa parameter. Membaca file dari environment variable `IDX_PORTFOLIO_PATH`. Me
 | `Format portofolio tidak valid` | Periksa nama field dan tipe datanya (angka tanpa tanda kutip, tanpa titik ribuan: `4820`, bukan `"4.820"`). |
 | `Saham "XXXX" tidak ditemukan` | Kode saham salah atau sudah delisting. Cek kode di <https://www.idx.co.id>. |
 | `Gagal mengambil data (429 ...)` | Terlalu banyak request ke Yahoo. Tunggu beberapa menit. |
-| Harga berbeda dengan aplikasi sekuritas | Data Yahoo bisa tertunda beberapa menit selama jam bursa. Untuk transaksi, selalu acu harga di aplikasi sekuritas. |
+| Harga berbeda dengan aplikasi sekuritas | Data Yahoo bisa tertunda beberapa menit selama jam bursa. Cek `dataAsOfLocal` dan `freshnessNote`. Untuk transaksi, selalu acu harga di aplikasi sekuritas. |
+| Untung/rugi sebuah saham terlihat sangat besar/aneh | Kemungkinan saham tersebut melakukan stock split. Cek `warnings`, lalu sesuaikan `lots` dan `avgPrice`. |
+| Peringatan `buyDate ... tidak diisi` | Tambahkan `buyDate` di holding tersebut agar pengecekan split akurat. |
 
 ## Sumber data & batasan
 
@@ -228,7 +267,8 @@ Tanpa parameter. Membaca file dari environment variable `IDX_PORTFOLIO_PATH`. Me
 src/
   index.ts      # entry point (stdio transport)
   server.ts     # definisi tools MCP
-  yahoo.ts      # klien & parser data harga
+  yahoo.ts      # klien & parser data harga, dividen, split, status pasar
+  summary.ts    # ringkasan performa (price/total return, drawdown)
   portfolio.ts  # skema & perhitungan portofolio
 test/           # unit + integration test (node:test, fetch tiruan)
 ```

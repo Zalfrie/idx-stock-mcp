@@ -14,8 +14,24 @@ export interface Candle {
   high: number | null;
   low: number | null;
   close: number | null;
+  /** Harga penutupan yang disesuaikan dividen & split (null jika tidak tersedia). */
+  adjClose: number | null;
   volume: number | null;
 }
+
+export interface Dividend {
+  date: string;
+  amount: number; // per lembar
+}
+
+export interface Split {
+  date: string;
+  numerator: number;
+  denominator: number;
+  ratio: string; // mis. "5:1" = 1 lembar lama jadi 5 lembar baru
+}
+
+export type MarketState = "open" | "closed" | "unknown";
 
 export interface Quote {
   symbol: string;
@@ -24,22 +40,35 @@ export interface Quote {
   exchangeTimezone: string;
   price: number;
   previousClose: number | null;
+  /** Dari mana previousClose diambil — untuk audit. */
+  previousCloseSource: "meta.previousClose" | "candle" | "unavailable";
   change: number | null;
   changePct: number | null;
   dayHigh: number | null;
   dayLow: number | null;
   fiftyTwoWeekHigh: number | null;
   fiftyTwoWeekLow: number | null;
-  marketTime: string | null; // ISO
   pricePerLot: number; // 1 lot = 100 lembar
+  /** Waktu harga terakhir (ISO, UTC). */
+  dataAsOf: string | null;
+  /** Waktu harga terakhir dalam WIB, mudah dibaca. */
+  dataAsOfLocal: string | null;
+  dataAgeMinutes: number | null;
+  marketState: MarketState;
+  /** Penjelasan singkat soal kesegaran data, untuk disampaikan ke pengguna. */
+  freshnessNote: string;
 }
 
 export interface ChartResult {
   quote: Quote;
   candles: Candle[];
+  dividends: Dividend[];
+  splits: Split[];
 }
 
 export const LOT_SIZE = 100;
+/** Jika pasar dianggap buka tapi harga tidak bergerak selama ini, tandai mencurigakan. */
+export const STALE_WHILE_OPEN_MINUTES = 30;
 
 export const VALID_RANGES = ["1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y", "10y", "ytd", "max"] as const;
 export const VALID_INTERVALS = ["1d", "1wk", "1mo"] as const;
@@ -50,7 +79,6 @@ const INDEX_ALIASES: Record<string, string> = {
   IHSG: "^JKSE",
   JKSE: "^JKSE",
   COMPOSITE: "^JKSE",
-  LQ45: "^JKLQ45",
 };
 
 /** Ubah input pengguna ("bbca", "BBCA.JK", "IHSG") menjadi simbol Yahoo. */
@@ -58,7 +86,10 @@ export function normalizeTicker(input: string): string {
   const raw = input.trim().toUpperCase();
   if (!raw) throw new Error("Ticker tidak boleh kosong");
   if (INDEX_ALIASES[raw]) return INDEX_ALIASES[raw];
-  if (raw.startsWith("^")) return raw;
+  if (raw.startsWith("^")) {
+    if (!/^\^[A-Z0-9]{2,10}$/.test(raw)) throw new Error(`Simbol indeks tidak valid: "${raw}"`);
+    return raw;
+  }
   if (raw.endsWith(".JK")) {
     assertTickerShape(raw.slice(0, -3));
     return raw;
@@ -77,15 +108,63 @@ function stripSuffix(symbol: string): string {
   return symbol.endsWith(".JK") ? symbol.slice(0, -3) : symbol;
 }
 
+/** Tanggal (YYYY-MM-DD) di zona waktu bursa. */
 function toDateString(epochSec: number, gmtOffsetSec: number): string {
   return new Date((epochSec + gmtOffsetSec) * 1000).toISOString().slice(0, 10);
+}
+
+const HARI = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+const BULAN = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun", "Jul", "Agu", "Sep", "Okt", "Nov", "Des"];
+
+/** "Jum, 16 Okt 2026 16:14 WIB" — tanpa bergantung pada data locale ICU. */
+function formatLocal(epochSec: number, gmtOffsetSec: number, tzLabel: string): string {
+  const d = new Date((epochSec + gmtOffsetSec) * 1000);
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mm = String(d.getUTCMinutes()).padStart(2, "0");
+  return `${HARI[d.getUTCDay()]}, ${d.getUTCDate()} ${BULAN[d.getUTCMonth()]} ${d.getUTCFullYear()} ${hh}:${mm} ${tzLabel}`;
 }
 
 const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
 const round = (v: number, d = 2) => Math.round(v * 10 ** d) / 10 ** d;
 
+export interface ParseOptions {
+  /** Waktu sekarang (ms epoch). Bisa diisi untuk test. */
+  now?: number;
+}
+
+/**
+ * Tentukan status pasar.
+ * Prioritas: meta.currentTradingPeriod.regular dari Yahoo; jika tidak ada, perkiraan
+ * jam bursa BEI (Senin–Jumat 09:00–16:00 WIB, tanpa memperhitungkan hari libur).
+ */
+function detectMarketState(meta: any, nowSec: number, gmtOffset: number): MarketState {
+  const reg = meta?.currentTradingPeriod?.regular;
+  const start = num(reg?.start), end = num(reg?.end);
+  if (start !== null && end !== null && end > start) {
+    return nowSec >= start && nowSec < end ? "open" : "closed";
+  }
+  const local = new Date((nowSec + gmtOffset) * 1000);
+  const day = local.getUTCDay();
+  const minutes = local.getUTCHours() * 60 + local.getUTCMinutes();
+  if (day === 0 || day === 6) return "closed";
+  if (minutes < 9 * 60 || minutes >= 16 * 60) return "closed";
+  return "unknown"; // jam bursa, tapi tanpa data resmi tidak bisa memastikan (bisa hari libur)
+}
+
+function buildFreshnessNote(state: MarketState, local: string | null, ageMin: number | null): string {
+  if (!local) return "Waktu data tidak tersedia; perlakukan harga sebagai perkiraan.";
+  if (state === "closed") return `Pasar sedang tutup. Harga adalah penutupan terakhir per ${local}.`;
+  if (state === "open") {
+    if (ageMin !== null && ageMin > STALE_WHILE_OPEN_MINUTES) {
+      return `Pasar seharusnya buka, tetapi harga terakhir per ${local} (${ageMin} menit lalu). Bisa jadi hari libur bursa, saham disuspensi, atau data tertunda.`;
+    }
+    return `Pasar sedang buka. Harga per ${local}; data bisa tertunda beberapa menit dari bursa.`;
+  }
+  return `Status pasar tidak dapat dipastikan. Harga terakhir per ${local}.`;
+}
+
 /** Parse respons JSON /v8/finance/chart menjadi struktur yang rapi. */
-export function parseChart(json: any): ChartResult {
+export function parseChart(json: any, opts: ParseOptions = {}): ChartResult {
   const err = json?.chart?.error;
   if (err) throw new Error(`Yahoo Finance: ${err.description ?? err.code ?? "error tidak diketahui"}`);
   const result = json?.chart?.result?.[0];
@@ -93,8 +172,10 @@ export function parseChart(json: any): ChartResult {
 
   const meta = result.meta;
   const gmtOffset: number = num(meta.gmtoffset) ?? 7 * 3600;
-  const timestamps: number[] = result.timestamp ?? [];
+  const tzLabel = gmtOffset === 7 * 3600 ? "WIB" : `UTC${gmtOffset >= 0 ? "+" : ""}${gmtOffset / 3600}`;
+  const timestamps: number[] = Array.isArray(result.timestamp) ? result.timestamp : [];
   const q = result.indicators?.quote?.[0] ?? {};
+  const adj: unknown[] = result.indicators?.adjclose?.[0]?.adjclose ?? [];
 
   const candles: Candle[] = timestamps.map((t, i) => ({
     date: toDateString(t, gmtOffset),
@@ -102,20 +183,62 @@ export function parseChart(json: any): ChartResult {
     high: num(q.high?.[i]),
     low: num(q.low?.[i]),
     close: num(q.close?.[i]),
+    adjClose: num(adj[i]),
     volume: num(q.volume?.[i]),
   }));
 
-  const price = num(meta.regularMarketPrice) ?? [...candles].reverse().find((c) => c.close !== null)?.close ?? null;
+  const dividends: Dividend[] = Object.values(result.events?.dividends ?? {})
+    .map((d: any) => ({ date: num(d?.date), amount: num(d?.amount) }))
+    .filter((d): d is { date: number; amount: number } => d.date !== null && d.amount !== null)
+    .sort((a, b) => a.date - b.date)
+    .map((d) => ({ date: toDateString(d.date, gmtOffset), amount: d.amount }));
+
+  const splits: Split[] = Object.values(result.events?.splits ?? {})
+    .map((s: any) => ({ date: num(s?.date), numerator: num(s?.numerator), denominator: num(s?.denominator), ratio: s?.splitRatio }))
+    .filter((s): s is { date: number; numerator: number; denominator: number; ratio: any } =>
+      s.date !== null && s.numerator !== null && s.denominator !== null && s.denominator > 0)
+    .sort((a, b) => a.date - b.date)
+    .map((s) => ({
+      date: toDateString(s.date, gmtOffset),
+      numerator: s.numerator,
+      denominator: s.denominator,
+      ratio: typeof s.ratio === "string" ? s.ratio : `${s.numerator}:${s.denominator}`,
+    }));
+
+  const withClose = candles.filter((c) => c.close !== null) as (Candle & { close: number })[];
+  const lastCandle = withClose[withClose.length - 1];
+
+  const price = num(meta.regularMarketPrice) ?? lastCandle?.close ?? null;
   if (price === null) throw new Error("Harga terakhir tidak tersedia untuk simbol ini.");
 
-  // chartPreviousClose = penutupan SEBELUM awal rentang (bukan kemarin), jadi
-  // utamakan meta.previousClose, lalu penutupan candle sebelum candle terakhir.
-  const withClose = candles.filter((c) => c.close !== null);
-  const prevCandleClose = withClose.length >= 2 ? withClose[withClose.length - 2].close : null;
-  const previousClose = num(meta.previousClose) ?? prevCandleClose ?? num(meta.chartPreviousClose);
+  const marketTime = num(meta.regularMarketTime);
+  const marketDate = marketTime !== null ? toDateString(marketTime, gmtOffset) : null;
+
+  // Penutupan kemarin:
+  // 1) meta.previousClose bila Yahoo menyediakannya.
+  // 2) Jika candle terakhir adalah hari yang sama dengan harga terkini → pakai candle sebelumnya.
+  //    Jika candle hari ini belum muncul (candle terakhir < tanggal harga) → candle terakhir itu
+  //    sendiri adalah penutupan sebelumnya.
+  // chartPreviousClose sengaja TIDAK dipakai: itu penutupan sebelum awal rentang, bukan kemarin.
+  let previousClose: number | null = num(meta.previousClose);
+  let previousCloseSource: Quote["previousCloseSource"] = previousClose !== null ? "meta.previousClose" : "unavailable";
+  if (previousClose === null && lastCandle) {
+    if (marketDate && lastCandle.date < marketDate) {
+      previousClose = lastCandle.close;
+      previousCloseSource = "candle";
+    } else if (withClose.length >= 2) {
+      previousClose = withClose[withClose.length - 2].close;
+      previousCloseSource = "candle";
+    }
+  }
+
   const change = previousClose !== null ? round(price - previousClose) : null;
   const changePct = previousClose ? round(((price - previousClose) / previousClose) * 100) : null;
-  const marketTime = num(meta.regularMarketTime);
+
+  const nowSec = Math.floor((opts.now ?? Date.now()) / 1000);
+  const marketState = detectMarketState(meta, nowSec, gmtOffset);
+  const dataAgeMinutes = marketTime !== null ? Math.max(0, Math.round((nowSec - marketTime) / 60)) : null;
+  const dataAsOfLocal = marketTime !== null ? formatLocal(marketTime, gmtOffset, tzLabel) : null;
 
   return {
     quote: {
@@ -125,16 +248,23 @@ export function parseChart(json: any): ChartResult {
       exchangeTimezone: meta.exchangeTimezoneName ?? "Asia/Jakarta",
       price,
       previousClose,
+      previousCloseSource,
       change,
       changePct,
       dayHigh: num(meta.regularMarketDayHigh),
       dayLow: num(meta.regularMarketDayLow),
       fiftyTwoWeekHigh: num(meta.fiftyTwoWeekHigh),
       fiftyTwoWeekLow: num(meta.fiftyTwoWeekLow),
-      marketTime: marketTime !== null ? new Date(marketTime * 1000).toISOString() : null,
       pricePerLot: price * LOT_SIZE,
+      dataAsOf: marketTime !== null ? new Date(marketTime * 1000).toISOString() : null,
+      dataAsOfLocal,
+      dataAgeMinutes,
+      marketState,
+      freshnessNote: buildFreshnessNote(marketState, dataAsOfLocal, dataAgeMinutes),
     },
     candles,
+    dividends,
+    splits,
   };
 }
 
@@ -143,6 +273,8 @@ export interface YahooClientOptions {
   baseUrl?: string;
   timeoutMs?: number;
   cacheTtlMs?: number;
+  /** Sumber waktu (ms epoch); bisa diganti untuk test. */
+  clock?: () => number;
 }
 
 export class YahooClient {
@@ -150,6 +282,7 @@ export class YahooClient {
   private baseUrl: string;
   private timeoutMs: number;
   private cacheTtlMs: number;
+  readonly clock: () => number;
   private cache = new Map<string, { at: number; data: ChartResult }>();
 
   constructor(opts: YahooClientOptions = {}) {
@@ -157,15 +290,18 @@ export class YahooClient {
     this.baseUrl = opts.baseUrl ?? "https://query1.finance.yahoo.com";
     this.timeoutMs = opts.timeoutMs ?? 10_000;
     this.cacheTtlMs = opts.cacheTtlMs ?? 60_000;
+    this.clock = opts.clock ?? (() => Date.now());
   }
 
   async chart(tickerInput: string, range: Range = "5d", interval: Interval = "1d"): Promise<ChartResult> {
     const symbol = normalizeTicker(tickerInput);
     const key = `${symbol}|${range}|${interval}`;
     const hit = this.cache.get(key);
-    if (hit && Date.now() - hit.at < this.cacheTtlMs) return hit.data;
+    if (hit && this.clock() - hit.at < this.cacheTtlMs) return hit.data;
 
-    const url = `${this.baseUrl}/v8/finance/chart/${encodeURIComponent(symbol)}?range=${range}&interval=${interval}&includePrePost=false`;
+    const url =
+      `${this.baseUrl}/v8/finance/chart/${encodeURIComponent(symbol)}` +
+      `?range=${range}&interval=${interval}&includePrePost=false&events=div%2Csplit`;
     const res = await this.fetchImpl(url, {
       headers: { "User-Agent": "Mozilla/5.0 (idx-stock-mcp)", Accept: "application/json" },
       signal: AbortSignal.timeout(this.timeoutMs),
@@ -173,8 +309,8 @@ export class YahooClient {
     if (res.status === 404) throw new Error(`Saham "${tickerInput}" tidak ditemukan.`);
     if (!res.ok) throw new Error(`Gagal mengambil data (${res.status} ${res.statusText}).`);
 
-    const data = parseChart(await res.json());
-    this.cache.set(key, { at: Date.now(), data });
+    const data = parseChart(await res.json(), { now: this.clock() });
+    this.cache.set(key, { at: this.clock(), data });
     return data;
   }
 

@@ -1,7 +1,8 @@
 {
   "sellFeePct": 0.25,
+  "manualStaleDays": 7,
   "holdings": [
-    { "ticker": "BBCA", "lots": 1, "avgPrice": 4820, "note": "beli pertama, Okt 2026" }
+    { "ticker": "BBCA", "lots": 1, "avgPrice": 4820, "buyDate": "2026-10-19", "note": "beli pertama" }
   ],
   "manual": [
     { "name": "Reksa dana indeks IDX30 (Bibit)", "invested": 500000, "currentValue": 500000, "updatedAt": "2026-10-19" }
