@@ -1,8 +1,14 @@
 # idx-stock-mcp
 
+[![CI](https://github.com/Zalfrie/idx-stock-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Zalfrie/idx-stock-mcp/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![Node.js ≥20](https://img.shields.io/badge/node-%E2%89%A520-brightgreen.svg)
+
 MCP server agar Claude bisa membaca harga saham **Bursa Efek Indonesia (IDX/BEI)**, membandingkan performa saham, dan menghitung nilai portofolio pribadi Anda langsung dari percakapan.
 
 > ⚠️ Server ini **hanya membaca data**. Tidak ada fitur beli/jual dan tidak terhubung ke akun sekuritas mana pun (Bibit, Stockbit, Ajaib, dll). Data untuk informasi, bukan rekomendasi investasi.
+
+> 🧪 **Status:** parser data sudah diuji dengan 30 test memakai data tiruan berformat respons Yahoo Finance. Verifikasi dengan data live sedang berjalan. Jika menemukan angka yang berbeda dengan aplikasi sekuritas Anda, mohon [laporkan](https://github.com/Zalfrie/idx-stock-mcp/issues/new/choose).
 
 ## Daftar isi
 
@@ -24,10 +30,12 @@ MCP server agar Claude bisa membaca harga saham **Bursa Efek Indonesia (IDX/BEI)
 
 | Tool | Fungsi |
 | --- | --- |
-| `get_quote` | Harga terakhir, perubahan harian, rentang 52 minggu, dan harga per lot (100 lembar). |
-| `get_history` | Riwayat harga (OHLC + volume) dengan ringkasan return %, tertinggi, terendah, dan max drawdown. |
-| `compare_stocks` | Bandingkan 2–10 saham/indeks pada rentang waktu yang sama, diurutkan berdasarkan return. |
-| `get_portfolio` | Hitung nilai portofolio Anda: untung/rugi per saham, total, dan estimasi hasil bersih setelah fee jual. |
+| `get_quote` | Harga terakhir, perubahan harian, rentang 52 minggu, dan harga per lot (100 lembar), lengkap dengan **status pasar** (buka/tutup) dan **waktu data dalam WIB**. |
+| `get_history` | Riwayat harga (OHLC + volume) dengan return **harga saja** dan **total return termasuk dividen**, daftar dividen & stock split, tertinggi, terendah, dan max drawdown. |
+| `compare_stocks` | Bandingkan 2–10 saham/indeks pada rentang waktu yang sama, diurutkan berdasarkan total return (atau return harga jika data dividen tidak lengkap). |
+| `get_portfolio` | Hitung nilai portofolio Anda: untung/rugi per saham dan total, estimasi hasil bersih setelah fee jual, serta **peringatan** jika data tidak lengkap, ada stock split, atau nilai reksa dana sudah lama tidak diperbarui. |
+
+Prinsipnya: **lebih baik memberi peringatan daripada angka yang terlihat valid padahal tidak.**
 
 Kode saham bisa ditulis `BBCA`, `bbca`, atau `BBCA.JK`. Untuk indeks gunakan `IHSG`.
 
@@ -66,6 +74,11 @@ cp portfolio.example.json portfolio.json
 ```
 
 Lalu edit `portfolio.json` sesuai kepemilikan Anda (lihat [format lengkapnya](#format-file-portofolio)). File ini sudah masuk `.gitignore`, jadi tidak akan ikut ter-commit.
+
+Dua field yang sering terlewat:
+
+- **`buyDate`** (`YYYY-MM-DD`) di setiap saham. Dipakai untuk mendeteksi stock split setelah Anda membeli. Tanpa field ini, Anda akan mendapat peringatan setiap kali melihat portofolio.
+- **`updatedAt`** (`YYYY-MM-DD`) di setiap aset `manual` (mis. reksa dana). Perbarui setiap kali Anda mengubah `currentValue`. Jika lebih dari 7 hari (atau kosong), nilai tersebut ditandai usang.
 
 Catat **path lengkap** foldernya, karena dibutuhkan di langkah berikutnya. Jalankan `pwd` (macOS/Linux) atau `cd` (Windows) di dalam folder repo.
 
@@ -122,6 +135,14 @@ claude mcp add idx-stock \
 
 Cek dengan `claude mcp list`, atau ketik `/mcp` di dalam sesi Claude Code.
 
+#### Pastikan sudah terhubung dengan benar
+
+Buka chat baru dan tanyakan:
+
+> Berapa harga BBCA sekarang?
+
+Jawaban yang benar menyebut **harga**, **waktu data dalam WIB**, dan **status pasar** (buka/tutup). Contohnya: "...per Sen, 19 Okt 2026 16:00 WIB, pasar sedang tutup". Jika Claude menjawab tanpa memanggil tool `get_quote`, atau tidak menyebut waktu data, kemungkinan server belum terhubung. Lihat [Troubleshooting](#troubleshooting).
+
 ### 5. Mulai bertanya
 
 Cukup bertanya dengan bahasa biasa, dan Claude akan memanggil tool yang sesuai.
@@ -130,17 +151,22 @@ Cukup bertanya dengan bahasa biasa, dan Claude akan memanggil tool yang sesuai.
 | --- | --- |
 | "Berapa harga BBCA sekarang? 1 lotnya berapa?" | `get_quote` |
 | "Bagaimana kondisi IHSG hari ini?" | `get_quote` |
+| "Pasar sudah buka belum? Harga BBRI ini data jam berapa?" | `get_quote` |
 | "Tunjukkan pergerakan TLKM 1 tahun terakhir, turunnya paling dalam berapa persen?" | `get_history` |
+| "Berapa total return BBRI setahun terakhir termasuk dividen? Dividennya berapa per lembar?" | `get_history` |
 | "Bandingkan BBCA, BBRI, BMRI, dan IHSG selama 6 bulan." | `compare_stocks` |
 | "Bank mana yang paling tahan banting tahun ini?" | `compare_stocks` |
 | "Berapa nilai portofolio saya hari ini? Untung atau rugi?" | `get_portfolio` |
 | "Kalau semua saham saya jual sekarang, dapat bersih berapa?" | `get_portfolio` |
+| "Ada peringatan apa di portofolio saya?" | `get_portfolio` |
 
 Tips:
 
 - Sebutkan rentang waktu kalau perlu: `1mo`, `3mo`, `6mo`, `1y`, `2y`, `5y`, `ytd`, `max`.
 - Setelah membeli atau menjual saham, **update `portfolio.json`**. Server membaca file ini setiap kali dipanggil, jadi tidak perlu restart.
-- Untuk reksa dana Bibit, update nilai `currentValue` di bagian `manual` sesekali, misalnya seminggu sekali, sesuai angka di aplikasi.
+- Untuk reksa dana Bibit, update nilai `currentValue` dan `updatedAt` di bagian `manual` sesekali, misalnya seminggu sekali, sesuai angka di aplikasi.
+- Untuk membandingkan saham yang rutin membagi dividen (mis. saham bank), minta Claude memakai **total return**, bukan hanya perubahan harga.
+- Jika Claude menyebut "Total TIDAK LENGKAP", ada saham yang harganya gagal diambil dan tidak ikut dihitung. Coba lagi beberapa saat kemudian.
 
 ## Format file portofolio
 
