@@ -34,7 +34,7 @@ export function splitCheckRange(buyDate: string | undefined, nowMs: number): Ran
 
 export function createServer(opts: ServerOptions = {}) {
   const client = opts.client ?? new YahooClient();
-  const server = new McpServer({ name: "idx-stock-mcp", version: "1.3.0" });
+  const server = new McpServer({ name: "idx-stock-mcp", version: "1.4.0" });
 
   const readOnly = { readOnlyHint: true, openWorldHint: true } as const;
 
@@ -141,7 +141,9 @@ export function createServer(opts: ServerOptions = {}) {
       title: "Nilai portofolio saya",
       description:
         "Baca file portofolio lokal (IDX_PORTFOLIO_PATH) lalu hitung nilai pasar, untung/rugi belum terealisasi per saham dan total, " +
-        "serta ESTIMASI hasil bersih jika dijual. Juga mengecek stock split setelah tanggal beli. Hanya membaca — tidak bisa membeli atau menjual. " +
+        "serta ESTIMASI hasil bersih jika dijual. Jika file berisi riwayat `transactions`, posisi dihitung dengan metode harga rata-rata, " +
+        "lengkap dengan realizedPnl (untung/rugi penjualan), dividendsReceived (dividen bruto berdasarkan ex-date), posisi yang sudah habis (closed), " +
+        "dan totals.totalReturn. Juga mengecek stock split setelah tanggal beli. Hanya membaca — tidak bisa membeli atau menjual. " +
         "WAJIB sampaikan isi 'warnings' ke pengguna bersama angka-angkanya, terutama bila totals.incomplete bernilai true.",
       inputSchema: {},
       annotations: { readOnlyHint: true, openWorldHint: true },
@@ -154,30 +156,46 @@ export function createServer(opts: ServerOptions = {}) {
         const p = await loadPortfolio(opts.portfolioPath);
         const now = client.clock();
 
-        // buyDate paling awal per ticker menentukan rentang pengecekan split
-        const earliestBuy = new Map<string, string | undefined>();
-        for (const h of p.holdings) {
-          const t = normalizeHoldingTicker(h.ticker);
-          const prev = earliestBuy.get(t);
-          if (!earliestBuy.has(t)) earliestBuy.set(t, h.buyDate);
-          else if (prev && h.buyDate && h.buyDate < prev) earliestBuy.set(t, h.buyDate);
-          else if (!h.buyDate) earliestBuy.set(t, undefined); // ada lot tanpa tanggal → cek rentang default
-        }
+        // Tanggal beli paling awal per ticker (dari holdings maupun transactions) menentukan
+        // rentang chart untuk pengecekan split dan dividen. undefined = ada lot tanpa tanggal → rentang default.
+        const entries: { ticker: string; buyDate: string | undefined }[] = [
+          ...p.holdings.map((h) => ({ ticker: normalizeHoldingTicker(h.ticker), buyDate: h.buyDate })),
+          ...p.transactions.filter((t) => t.type === "buy").map((t) => ({ ticker: normalizeHoldingTicker(t.ticker), buyDate: t.date })),
+        ];
+        const earliestBuy = entries.reduce((acc, { ticker, buyDate }) => {
+          if (!acc.has(ticker)) return new Map(acc).set(ticker, buyDate);
+          const prev = acc.get(ticker);
+          if (!buyDate || prev === undefined) return new Map(acc).set(ticker, undefined);
+          return buyDate < prev ? new Map(acc).set(ticker, buyDate) : acc;
+        }, new Map<string, string | undefined>());
+
+        // Posisi yang sudah habis (hanya ada di transactions, net lot ≤ 0) tidak butuh harga terkini.
+        const netLots = p.transactions.reduce(
+          (acc, t) => {
+            const k = normalizeHoldingTicker(t.ticker);
+            return new Map(acc).set(k, (acc.get(k) ?? 0) + (t.type === "buy" ? t.lots : -t.lots));
+          },
+          new Map<string, number>(),
+        );
+        const inHoldings = new Set(p.holdings.map((h) => normalizeHoldingTicker(h.ticker)));
+        const needsQuote = (t: string) => inHoldings.has(t) || (netLots.get(t) ?? 0) > 0;
 
         const market = new Map<string, MarketData>();
         await Promise.all(
           [...earliestBuy.entries()].map(async ([t, buyDate]) => {
             const md: MarketData = { quote: new Error("Harga tidak tersedia") };
             const [quoteRes, splitRes] = await Promise.allSettled([
-              client.quote(t),
+              needsQuote(t) ? client.quote(t) : Promise.reject(new Error("posisi sudah habis; harga tidak diperlukan")),
               client.chart(t, splitCheckRange(buyDate, now), "1mo"),
             ]);
             md.quote = quoteRes.status === "fulfilled" ? quoteRes.value : asError(quoteRes.reason);
             if (splitRes.status === "fulfilled") {
               md.splits = splitRes.value.splits;
+              md.dividends = splitRes.value.dividends;
               md.splitsCheckedSince = splitRes.value.candles[0]?.date;
             } else {
               md.splits = asError(splitRes.reason);
+              md.dividends = asError(splitRes.reason);
             }
             market.set(t, md);
           }),

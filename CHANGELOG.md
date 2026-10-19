@@ -7,6 +7,24 @@ versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
 _Tidak ada._
 
+## [1.4.0] - 2026-10-19
+
+Riwayat transaksi, realized profit, dan dividen diterima ([#3](https://github.com/Zalfrie/idx-stock-mcp/issues/3)).
+
+### Ditambahkan
+- `portfolio.json`: array `transactions` opsional (`ticker`, `type` beli/jual, `date`, `lots`, `price`, `fee`, `note`) dan `buyFeePct` (default 0.15).
+  Posisi dihitung dengan metode harga rata-rata; fee beli masuk modal. Ticker yang punya transaksi tidak boleh ada di `holdings`.
+- `get_portfolio`: per saham `source`, `realizedPnl`, `dividendsReceived` (bruto, berdasarkan ex-date dan lembar yang dipegang sebelum ex-date), `dividends[]`;
+  bagian baru `closed[]` untuk posisi yang sudah habis; `totals.realizedPnl`, `totals.dividendsReceived`, `totals.totalReturn`;
+  `assumptions.buyFeePct`, `costMethod`, `dividendTax`, `totalReturn`.
+- Validasi: menjual melebihi kepemilikan pada tanggal itu → error yang jelas, bukan angka minus; transaksi bertanggal masa depan diberi peringatan.
+- Posisi yang sudah habis tidak lagi meminta harga terkini ke Yahoo (hemat request).
+- Modul baru `src/transactions.ts` (fungsi murni) + 8 test unit dan 4 test integrasi.
+
+### Diubah
+- README: bagian format file portofolio dan referensi `get_portfolio`; `portfolio.example.json` memakai `transactions`.
+- Field lama tidak berubah, sehingga file portofolio versi sebelumnya tetap berjalan.
+
 ## [1.3.0] - 2026-10-19
 
 ### Ditambahkan

@@ -203,3 +203,109 @@ test("get_portfolio: error konfigurasi diberi pesan jelas", async () => {
   const r3: any = await badDate.callTool({ name: "get_portfolio", arguments: {} });
   assert.match(r3.content[0].text, /YYYY-MM-DD/);
 });
+
+// ---------- Issue #3: riwayat transaksi, realized profit, dividen diterima ----------
+
+test("get_portfolio: posisi dari transaksi, realized profit, dividen diterima, posisi tertutup", async () => {
+  const d1 = MON_19_OCT_0900_WIB - 300 * DAY; // 2025-12-23
+  const d2 = MON_19_OCT_0900_WIB - 100 * DAY; // 2026-07-11
+  const bodies = {
+    ...defaultBodies,
+    "BBCA.JK": chartFixture("BBCA.JK", [6000, 5500, 5175, 4820], { dividends: [{ ts: d1, amount: 50 }, { ts: d2, amount: 100 }] }),
+    "TLKM.JK": chartFixture("TLKM.JK", [3000, 2900, 2800, 2700]),
+  };
+  const path = await writePortfolio({
+    buyFeePct: 0,
+    sellFeePct: 0,
+    holdings: [{ ticker: "BBRI", lots: 1, avgPrice: 3000, buyDate: "2026-10-01" }],
+    transactions: [
+      { ticker: "BBCA", type: "buy", date: "2025-11-01", lots: 1, price: 7000 },
+      { ticker: "BBCA", type: "buy", date: "2026-01-10", lots: 1, price: 5000 },
+      { ticker: "BBCA", type: "sell", date: "2026-02-10", lots: 1, price: 6500 },
+      { ticker: "TLKM", type: "buy", date: "2026-01-10", lots: 1, price: 3000 },
+      { ticker: "TLKM", type: "sell", date: "2026-03-10", lots: 1, price: 3300 },
+    ],
+  });
+  const client = await connect({ portfolioPath: path, bodies });
+  const out = parse(await client.callTool({ name: "get_portfolio", arguments: {} }));
+
+  const bbca = out.holdings.find((h: any) => h.ticker === "BBCA");
+  const bbri = out.holdings.find((h: any) => h.ticker === "BBRI");
+  assert.equal(bbca.source, "transactions");
+  assert.equal(bbca.lots, 1);
+  assert.equal(bbca.avgPrice, 6000, "rata-rata dari 7000 dan 5000");
+  assert.equal(bbca.cost, 600_000);
+  assert.equal(bbca.realizedPnl, 50_000, "jual 1 lot @6500 dengan avg 6000");
+  assert.equal(bbca.marketValue, 482_000);
+  assert.equal(bbca.unrealizedPnl, -118_000);
+  // dividen: 2025-12-23 → 1 lot (100 × 50); 2026-07-11 → 1 lot (100 × 100)
+  assert.equal(bbca.dividendsReceived, 15_000);
+  assert.equal(bbca.dividends.length, 2);
+  assert.equal(bbri.source, "manual");
+  assert.equal(bbri.realizedPnl, null);
+  assert.equal(bbri.dividendsReceived, null);
+
+  assert.equal(out.holdings.some((h: any) => h.ticker === "TLKM"), false, "posisi habis tidak di holdings");
+  assert.equal(out.closed.length, 1);
+  assert.equal(out.closed[0].ticker, "TLKM");
+  assert.equal(out.closed[0].realizedPnl, 30_000);
+
+  assert.equal(out.totals.realizedPnl, 80_000);
+  assert.equal(out.totals.dividendsReceived, 15_000);
+  assert.equal(out.totals.unrealizedPnl, -118_000 + 30_000);
+  assert.equal(out.totals.totalReturn, -118_000 + 30_000 + 80_000 + 15_000);
+  assert.equal(out.assumptions.costMethod, "average");
+  assert.match(out.assumptions.dividendTax, /bruto/);
+});
+
+test("get_portfolio: data dividen gagal → null + peringatan; posisi tertutup tidak minta harga; transaksi masa depan diperingatkan", async () => {
+  const path = await writePortfolio({
+    transactions: [
+      { ticker: "BBCA", type: "buy", date: "2026-01-10", lots: 1, price: 5000 },
+      { ticker: "TLKM", type: "buy", date: "2026-01-10", lots: 1, price: 3000 },
+      { ticker: "TLKM", type: "sell", date: "2026-02-10", lots: 1, price: 3100 },
+      { ticker: "BBRI", type: "buy", date: "2027-01-10", lots: 1, price: 3000 },
+    ],
+  });
+  const { impl, calls } = fakeFetch({ ...defaultBodies, "TLKM.JK": chartFixture("TLKM.JK", [3000, 3100]) }, ["BBCA.JK"]);
+  const yahoo = new YahooClient({ fetchImpl: impl, clock: () => NOW_MS, sleepImpl: async () => {} });
+  const server = createServer({ client: yahoo, portfolioPath: path });
+  const client = new Client({ name: "test", version: "0.0.0" });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(a), client.connect(b)]);
+  const out = parse(await client.callTool({ name: "get_portfolio", arguments: {} }));
+
+  const bbca = out.holdings.find((h: any) => h.ticker === "BBCA");
+  assert.equal(bbca.status, "unpriced");
+  assert.equal(bbca.dividendsReceived, null);
+  assert.ok(out.warnings.some((w: string) => /Dividen diterima untuk BBCA tidak dapat dihitung/.test(w)));
+  assert.equal(out.totals.dividendsReceived, 0);
+
+  assert.equal(out.closed[0].ticker, "TLKM");
+  assert.equal(out.closed[0].dividendsReceived, 0);
+  const tlkmQuoteCalls = calls.filter((u) => u.includes("TLKM.JK") && u.includes("range=5d"));
+  assert.equal(tlkmQuoteCalls.length, 0, "posisi tertutup tidak boleh meminta harga terkini");
+
+  assert.ok(out.warnings.some((w: string) => /beli BBRI bertanggal 2027-01-10 berada di masa depan/.test(w)));
+});
+
+test("get_portfolio: ticker di holdings dan transactions sekaligus → error validasi", async () => {
+  const path = await writePortfolio({
+    holdings: [{ ticker: "BBCA", lots: 1, avgPrice: 5000 }],
+    transactions: [{ ticker: "bbca", type: "buy", date: "2026-01-10", lots: 1, price: 5000 }],
+  });
+  const client = await connect({ portfolioPath: path });
+  const r: any = await client.callTool({ name: "get_portfolio", arguments: {} });
+  assert.equal(r.isError, true);
+  assert.match(r.content[0].text, /BBCA.*holdings.*transactions/);
+});
+
+test("get_portfolio: jual melebihi kepemilikan → error, bukan angka tebakan", async () => {
+  const path = await writePortfolio({
+    transactions: [{ ticker: "BBCA", type: "sell", date: "2026-01-10", lots: 1, price: 5000 }],
+  });
+  const client = await connect({ portfolioPath: path });
+  const r: any = await client.callTool({ name: "get_portfolio", arguments: {} });
+  assert.equal(r.isError, true);
+  assert.match(r.content[0].text, /hanya punya 0 lot/);
+});

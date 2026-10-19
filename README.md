@@ -9,7 +9,7 @@ MCP server agar Claude bisa membaca harga saham **Bursa Efek Indonesia (IDX/BEI)
 
 > ⚠️ Server ini **hanya membaca data**. Tidak ada fitur beli/jual dan tidak terhubung ke akun sekuritas mana pun (Bibit, Stockbit, Ajaib, dll). Data untuk informasi, bukan rekomendasi investasi.
 
-> 🧪 **Status:** parser data diuji dengan 41 test offline (data tiruan berformat respons Yahoo Finance) dan keempat tool sudah diverifikasi dengan data live BEI pada 19 Okt 2026 (harga, perubahan harian, dividen, dan total return cocok dengan respons mentah Yahoo). Jika menemukan angka yang berbeda dengan aplikasi sekuritas Anda, mohon [laporkan](https://github.com/Zalfrie/idx-stock-mcp/issues/new/choose).
+> 🧪 **Status:** parser data diuji dengan 53 test offline (data tiruan berformat respons Yahoo Finance) dan keempat tool sudah diverifikasi dengan data live BEI pada 19 Okt 2026 (harga, perubahan harian, dividen, dan total return cocok dengan respons mentah Yahoo). Jika menemukan angka yang berbeda dengan aplikasi sekuritas Anda, mohon [laporkan](https://github.com/Zalfrie/idx-stock-mcp/issues/new/choose).
 
 ## Daftar isi
 
@@ -202,22 +202,36 @@ Cukup bertanya dengan bahasa biasa, dan Claude akan memanggil tool yang sesuai.
 | "Berapa nilai portofolio saya hari ini? Untung atau rugi?" | `get_portfolio` |
 | "Kalau semua saham saya jual sekarang, dapat bersih berapa?" | `get_portfolio` |
 | "Ada peringatan apa di portofolio saya?" | `get_portfolio` |
+| "Berapa dividen yang sudah saya terima dari BBCA? Untung yang sudah terealisasi berapa?" | `get_portfolio` |
 
 Tips:
 
 - Sebutkan rentang waktu kalau perlu: `1mo`, `3mo`, `6mo`, `1y`, `2y`, `5y`, `ytd`, `max`.
-- Setelah membeli atau menjual saham, **update `portfolio.json`**. Server membaca file ini setiap kali dipanggil, jadi tidak perlu restart.
+- Setelah membeli atau menjual saham, **tambahkan satu baris di `transactions`** (atau update `holdings`). Server membaca file ini setiap kali dipanggil, jadi tidak perlu restart.
+- Dengan `transactions`, Anda bisa bertanya "sudah dapat dividen berapa dari BBCA?" atau "total untung saya termasuk yang sudah dijual dan dividen berapa?" (`totals.totalReturn`).
 - Untuk reksa dana Bibit, update nilai `currentValue` dan `updatedAt` di bagian `manual` sesekali, misalnya seminggu sekali, sesuai angka di aplikasi.
 - Untuk membandingkan saham yang rutin membagi dividen (mis. saham bank), minta Claude memakai **total return**, bukan hanya perubahan harga.
 - Jika Claude menyebut "Total TIDAK LENGKAP", ada saham yang harganya gagal diambil dan tidak ikut dihitung. Coba lagi beberapa saat kemudian.
 
 ## Format file portofolio
 
+Ada dua cara mencatat saham, dan keduanya bisa dipakai bersamaan untuk ticker yang berbeda:
+
+- **`transactions`** (disarankan): catat setiap beli dan jual. Server menghitung sendiri posisi, harga rata-rata, untung/rugi yang sudah terealisasi, dan dividen yang Anda terima.
+- **`holdings`**: cukup tulis posisi saat ini (lot + harga rata-rata). Cocok kalau tidak ingin mencatat riwayat, tetapi tanpa realized profit dan dividen.
+
+Satu ticker tidak boleh ada di keduanya.
+
 ```json
 {
+  "buyFeePct": 0.15,
   "sellFeePct": 0.25,
+  "transactions": [
+    { "ticker": "BBCA", "type": "buy",  "date": "2026-07-20", "lots": 1, "price": 6500, "note": "beli pertama" },
+    { "ticker": "BBCA", "type": "buy",  "date": "2026-08-20", "lots": 1, "price": 6100 },
+    { "ticker": "BBCA", "type": "sell", "date": "2026-10-01", "lots": 1, "price": 6300, "fee": 1575 }
+  ],
   "holdings": [
-    { "ticker": "BBCA", "lots": 1, "avgPrice": 4820, "buyDate": "2026-10-19", "note": "beli pertama" },
     { "ticker": "BBRI", "lots": 2, "avgPrice": 3500, "buyDate": "2026-10-20" }
   ],
   "manual": [
@@ -228,8 +242,16 @@ Tips:
 
 | Field | Keterangan |
 | --- | --- |
-| `sellFeePct` | Fee jual dalam persen, termasuk pajak penjualan (default `0.25`). Hanya untuk **estimasi** hasil bersih jika dijual. Sesuaikan dengan tarif sekuritas Anda. |
+| `buyFeePct` | Fee beli dalam persen (default `0.15`). Dipakai untuk transaksi beli yang tidak mengisi `fee`; masuk ke modal. |
+| `sellFeePct` | Fee jual dalam persen, termasuk pajak penjualan (default `0.25`). Dipakai untuk transaksi jual yang tidak mengisi `fee`, dan untuk **estimasi** hasil bersih jika dijual. Sesuaikan dengan tarif sekuritas Anda. |
 | `manualStaleDays` | Setelah berapa hari nilai aset `manual` dianggap usang dan diberi peringatan (default `7`). |
+| `transactions[].ticker` | Kode saham BEI, mis. `BBCA`. |
+| `transactions[].type` | `buy` atau `sell`. |
+| `transactions[].date` | Tanggal transaksi `YYYY-MM-DD`. Pada hari yang sama, beli diproses sebelum jual. |
+| `transactions[].lots` | Jumlah lot (1 lot = 100 lembar). |
+| `transactions[].price` | Harga eksekusi **per lembar**, sebelum fee. |
+| `transactions[].fee` | Fee absolut dalam rupiah (opsional). Jika diisi, menggantikan `buyFeePct`/`sellFeePct` untuk transaksi itu. |
+| `transactions[].note` | Catatan bebas (opsional). |
 | `holdings[].ticker` | Kode saham BEI, mis. `BBCA`. |
 | `holdings[].lots` | Jumlah lot (1 lot = 100 lembar). |
 | `holdings[].avgPrice` | Harga rata-rata beli **per lembar**. Fee beli tidak dihitung terpisah; masukkan ke `avgPrice` jika ingin modal akurat. Kalau membeli beberapa kali, hitung rata-ratanya (lihat di bawah). |
@@ -237,9 +259,17 @@ Tips:
 | `holdings[].note` | Catatan bebas (opsional). |
 | `manual[]` | Aset yang tidak diperdagangkan di bursa, mis. reksa dana. `invested` = total modal, `currentValue` = nilai terkini dari aplikasi, `updatedAt` = tanggal Anda terakhir memperbarui `currentValue`. |
 
-**Kalau saham Anda melakukan stock split**, misalnya 1 lembar menjadi 5 (5:1), jumlah lot dan `avgPrice` di file portofolio **tidak berubah otomatis**. Sesuaikan manual: `lots × 5` dan `avgPrice ÷ 5`. Server akan memberi peringatan jika mendeteksi split setelah `buyDate`.
+**Cara server menghitung `transactions`** (metode harga rata-rata, sama seperti tampilan aplikasi sekuritas di Indonesia):
 
-**Menghitung `avgPrice` jika membeli beberapa kali:**
+- Beli: modal bertambah `lot × 100 × price + fee`. Harga rata-rata = modal ÷ lembar.
+- Jual: `realizedPnl` bertambah `lot × 100 × price − fee − (lot × 100 × harga rata-rata saat itu)`. Modal berkurang sebesar harga rata-rata × lembar yang dijual.
+- Menjual lebih banyak dari yang dimiliki pada tanggal itu adalah error, bukan angka tebakan.
+- Posisi yang sudah habis dijual tetap dilaporkan di `closed[]` dengan realized profit dan dividennya.
+- **Dividen diterima** dihitung dari ex-date yang dilaporkan Yahoo: lembar yang Anda pegang berdasarkan transaksi **sebelum** ex-date × dividen per lembar. Beli tepat di ex-date tidak dapat dividen; jual tepat di ex-date masih dapat. Nilainya **bruto**, belum dipotong pajak dividen (umumnya 10% final untuk individu). Dividen yang jadwalnya belum masuk data Yahoo tidak terhitung.
+
+**Kalau saham Anda melakukan stock split**, misalnya 1 lembar menjadi 5 (5:1), jumlah lot dan harga di file portofolio **tidak berubah otomatis**. Untuk `holdings`: sesuaikan `lots × 5` dan `avgPrice ÷ 5`. Untuk `transactions`: sesuaikan `lots × 5` dan `price ÷ 5` pada transaksi sebelum tanggal split. Server akan memberi peringatan jika mendeteksi split setelah tanggal beli.
+
+**Menghitung `avgPrice` jika membeli beberapa kali** (hanya perlu untuk `holdings`; dengan `transactions` server menghitungnya sendiri):
 
 ```
 avgPrice = total uang yang dikeluarkan / total lembar
@@ -297,13 +327,17 @@ Tanpa parameter. Membaca file dari environment variable `IDX_PORTFOLIO_PATH`.
 
 | Bagian | Isi |
 | --- | --- |
-| `holdings[]` | Per saham: `status` (`priced`/`unpriced`), `lastPrice`, `priceAsOf`, `marketState`, `marketValue`, `unrealizedPnl`, `unrealizedPnlPct`, `estimatedNetIfSold`, `dayChangePct`, `warnings`. |
+| `holdings[]` | Per saham: `source` (`manual`/`transactions`), `status` (`priced`/`unpriced`), `lastPrice`, `priceAsOf`, `marketState`, `marketValue`, `unrealizedPnl`, `unrealizedPnlPct`, `estimatedNetIfSold`, `dayChangePct`, `realizedPnl`, `dividendsReceived`, `dividends[]` (per ex-date: `amountPerShare`, `shares`, `total`), `warnings`. `realizedPnl` dan `dividendsReceived` bernilai `null` untuk `source: "manual"`. |
+| `closed[]` | Posisi dari `transactions` yang sudah habis dijual: `realizedPnl`, `dividendsReceived`, `dividends[]`, `buyCount`, `sellCount`, `firstBuyDate`, `lastTransactionDate`. |
 | `manual[]` | Aset manual + `pnl` dan `stale` (usang atau tidak). |
-| `totals` | `cost`, `marketValue`, `unrealizedPnl`, `unrealizedPnlPct`, `estimatedNetIfSold`, `incomplete`, `excludedTickers`, `excludedCost`. |
-| `assumptions` | Asumsi perhitungan: fee jual, perlakuan fee beli, ukuran lot. |
+| `totals` | `cost`, `marketValue`, `unrealizedPnl`, `unrealizedPnlPct`, `estimatedNetIfSold`, `realizedPnl`, `dividendsReceived` (bruto), `totalReturn` (= unrealized + realized + dividen), `incomplete`, `excludedTickers`, `excludedCost`. |
+| `assumptions` | Asumsi perhitungan: `buyFeePct`, `sellFeePct`, metode harga rata-rata (`costMethod`), perlakuan pajak dividen (`dividendTax`), ukuran lot. |
 | `warnings` | Peringatan yang harus disampaikan ke pengguna. |
 
 Aturan integritas:
+
+- **Jual melebihi kepemilikan** pada tanggal itu dianggap error file portofolio, bukan dihitung minus.
+- **Dividen** hanya dihitung untuk ticker yang punya `transactions` dan datanya berhasil diambil; jika gagal, `dividendsReceived` bernilai `null` dan ada peringatan, sehingga `totals.dividendsReceived` bisa kurang dari kenyataan.
 
 - **Saham yang harganya gagal diambil tidak ikut dihitung** dalam `totals` (bukan dianggap impas). Saham tersebut tercantum di `excludedTickers`, dan peringatan "Total TIDAK LENGKAP" muncul di urutan pertama `warnings`.
 - **Stock split** setelah `buyDate` dideteksi dan diberi peringatan per saham.
