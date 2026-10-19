@@ -1,0 +1,42 @@
+{
+  "name": "idx-stock-mcp",
+  "version": "1.0.0",
+  "description": "MCP server untuk data saham Bursa Efek Indonesia (IDX) dan portofolio pribadi",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/index.js",
+    "test": "tsc -p tsconfig.test.json && node --test \"dist-test/test/*.test.js\"",
+    "inspect": "npx @modelcontextprotocol/inspector node dist/index.js"
+  },
+  "keywords": [
+    "mcp",
+    "idx",
+    "saham",
+    "bei",
+    "claude"
+  ],
+  "author": "",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.5",
+    "typescript": "^7.0.2"
+  },
+  "type": "module",
+  "bin": {
+    "idx-stock-mcp": "dist/index.js"
+  },
+  "files": [
+    "dist",
+    "portfolio.example.json",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "private": true
+}
