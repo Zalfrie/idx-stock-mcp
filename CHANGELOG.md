@@ -7,6 +7,16 @@ versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
 _Tidak ada._
 
+## [1.3.0] - 2026-10-19
+
+### Ditambahkan
+- Dipublikasikan ke npm sebagai `idx-stock-mcp`: bisa dipakai tanpa clone/build lewat `npx -y idx-stock-mcp`.
+  README menjelaskan konfigurasi Claude Desktop (macOS/Linux dan Windows via `cmd /c npx`) dan Claude Code.
+- Skrip `prepublishOnly` menjalankan build + test sebelum publish.
+
+### Diubah
+- `"private": true` dihapus dari `package.json`.
+
 ## [1.2.0] - 2026-10-19
 
 ### Ditambahkan

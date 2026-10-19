@@ -1,6 +1,7 @@
 # idx-stock-mcp
 
 [![CI](https://github.com/Zalfrie/idx-stock-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Zalfrie/idx-stock-mcp/actions/workflows/ci.yml)
+[![npm](https://img.shields.io/npm/v/idx-stock-mcp.svg)](https://www.npmjs.com/package/idx-stock-mcp)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Node.js ≥20](https://img.shields.io/badge/node-%E2%89%A520-brightgreen.svg)
 
@@ -44,10 +45,16 @@ Kode saham bisa ditulis `BBCA`, `bbca`, atau `BBCA.JK`. Untuk indeks gunakan `IH
 ### 1. Persiapan
 
 - **Node.js 20 atau lebih baru.** Cek dengan `node -v`. Download di <https://nodejs.org>.
-- **Git** (untuk clone repo).
+- **Git**, hanya jika memilih instalasi dari source.
 - **Claude Desktop** atau **Claude Code** di komputer Anda.
 
 ### 2. Download & build
+
+**Opsi cepat (disarankan): tanpa download.** Paket tersedia di [npm](https://www.npmjs.com/package/idx-stock-mcp), jadi Claude
+bisa menjalankannya langsung lewat `npx`. Lewati langkah ini, lanjut ke langkah 3, dan di langkah 4 pakai konfigurasi `npx`.
+Saat pertama dipanggil, `npx` mengunduh paket (butuh internet, beberapa detik); setelah itu memakai cache.
+
+**Opsi dari source**, jika ingin mengubah kode atau menjalankan test:
 
 ```bash
 git clone https://github.com/Zalfrie/idx-stock-mcp.git
@@ -69,18 +76,16 @@ Di MCP Inspector, klik **Connect** → tab **Tools** → pilih `get_quote` → i
 
 Lewati langkah ini jika Anda hanya ingin melihat harga saham.
 
-```bash
-cp portfolio.example.json portfolio.json
-```
-
-Lalu edit `portfolio.json` sesuai kepemilikan Anda (lihat [format lengkapnya](#format-file-portofolio)). File ini sudah masuk `.gitignore`, jadi tidak akan ikut ter-commit.
+Buat file `portfolio.json` di folder mana saja (mis. folder home Anda) dengan isi seperti
+[portfolio.example.json](portfolio.example.json), lalu sesuaikan dengan kepemilikan Anda (lihat [format lengkapnya](#format-file-portofolio)).
+Jika memakai opsi dari source: `cp portfolio.example.json portfolio.json` di dalam folder repo; file ini sudah masuk `.gitignore`.
 
 Dua field yang sering terlewat:
 
 - **`buyDate`** (`YYYY-MM-DD`) di setiap saham. Dipakai untuk mendeteksi stock split setelah Anda membeli. Tanpa field ini, Anda akan mendapat peringatan setiap kali melihat portofolio.
 - **`updatedAt`** (`YYYY-MM-DD`) di setiap aset `manual` (mis. reksa dana). Perbarui setiap kali Anda mengubah `currentValue`. Jika lebih dari 7 hari (atau kosong), nilai tersebut ditandai usang.
 
-Catat **path lengkap** foldernya, karena dibutuhkan di langkah berikutnya. Jalankan `pwd` (macOS/Linux) atau `cd` (Windows) di dalam folder repo.
+Catat **path lengkap** file `portfolio.json`, karena dibutuhkan di langkah berikutnya.
 
 ### 4. Hubungkan ke Claude
 
@@ -89,9 +94,39 @@ Catat **path lengkap** foldernya, karena dibutuhkan di langkah berikutnya. Jalan
 1. Buka Claude Desktop → **Settings** → **Developer** → **Edit Config**. Ini membuka file `claude_desktop_config.json`:
    - macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
    - Windows: `%APPDATA%\Claude\claude_desktop_config.json`
-2. Tambahkan konfigurasi berikut (ganti path sesuai lokasi repo Anda):
+2. Tambahkan konfigurasi berikut (ganti path `portfolio.json` sesuai lokasi file Anda; hapus bagian `env` jika tidak memakai portofolio):
 
-   **macOS / Linux**
+   **Opsi cepat (npx)** — macOS / Linux
+   ```json
+   {
+     "mcpServers": {
+       "idx-stock": {
+         "command": "npx",
+         "args": ["-y", "idx-stock-mcp"],
+         "env": {
+           "IDX_PORTFOLIO_PATH": "/Users/nama/portfolio.json"
+         }
+       }
+     }
+   }
+   ```
+
+   **Opsi cepat (npx)** — Windows (Claude Desktop di Windows lebih andal memanggil `npx` lewat `cmd`)
+   ```json
+   {
+     "mcpServers": {
+       "idx-stock": {
+         "command": "cmd",
+         "args": ["/c", "npx", "-y", "idx-stock-mcp"],
+         "env": {
+           "IDX_PORTFOLIO_PATH": "C:\Users\nama\portfolio.json"
+         }
+       }
+     }
+   }
+   ```
+
+   **Opsi dari source** — macOS / Linux
    ```json
    {
      "mcpServers": {
@@ -106,7 +141,7 @@ Catat **path lengkap** foldernya, karena dibutuhkan di langkah berikutnya. Jalan
    }
    ```
 
-   **Windows** (gunakan `\\` pada path)
+   **Opsi dari source** — Windows (gunakan `\\` pada path)
    ```json
    {
      "mcpServers": {
@@ -126,6 +161,14 @@ Catat **path lengkap** foldernya, karena dibutuhkan di langkah berikutnya. Jalan
 4. Di kotak chat, klik ikon tools/connector. `idx-stock` dengan 4 tools harus muncul di sana.
 
 #### Opsi B — Claude Code
+
+Opsi cepat (npx):
+
+```bash
+claude mcp add idx-stock -e IDX_PORTFOLIO_PATH=/path/lengkap/portfolio.json -- npx -y idx-stock-mcp
+```
+
+Opsi dari source:
 
 ```bash
 claude mcp add idx-stock \
@@ -272,6 +315,7 @@ Aturan integritas:
 | Masalah | Solusi |
 | --- | --- |
 | `idx-stock` tidak muncul di Claude Desktop | Pastikan JSON config valid (tanpa koma berlebih), path ke `dist/index.js` benar dan sudah `npm run build`, lalu quit Claude Desktop sepenuhnya dan buka lagi. Log ada di menu Developer → Open Logs. |
+| `idx-stock` tidak muncul saat memakai `npx` | Pastikan Node.js ≥20 ada di PATH (`npx -v` di terminal). Di Windows pakai `"command": "cmd"` dengan `"args": ["/c", "npx", "-y", "idx-stock-mcp"]`. Pemanggilan pertama butuh internet untuk mengunduh paket. |
 | `node: command not found` | Node.js belum terpasang atau tidak ada di PATH. Ganti `"command": "node"` dengan path lengkap, mis. `/usr/local/bin/node` (cek dengan `which node`). |
 | `IDX_PORTFOLIO_PATH belum di-set` | Tambahkan bagian `env` di config (langkah 4), lalu restart Claude Desktop. |
 | `File portofolio tidak ditemukan` | Path di `IDX_PORTFOLIO_PATH` salah. Gunakan path lengkap (absolut), bukan `./portfolio.json`. |
@@ -312,6 +356,7 @@ test/           # unit + integration test (node:test, fetch tiruan)
 | `npm test` | Jalankan test (offline, memakai data tiruan) |
 | `npm run inspect` | Coba tools secara interaktif di MCP Inspector |
 | `npm start` | Jalankan server via stdio |
+| `npm publish` | Publish ke npm (otomatis build + test dulu lewat `prepublishOnly`) |
 
 ## Kontribusi
 
