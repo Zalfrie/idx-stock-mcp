@@ -8,7 +8,7 @@ MCP server agar Claude bisa membaca harga saham **Bursa Efek Indonesia (IDX/BEI)
 
 > ⚠️ Server ini **hanya membaca data**. Tidak ada fitur beli/jual dan tidak terhubung ke akun sekuritas mana pun (Bibit, Stockbit, Ajaib, dll). Data untuk informasi, bukan rekomendasi investasi.
 
-> 🧪 **Status:** parser data diuji dengan 35 test offline (data tiruan berformat respons Yahoo Finance) dan keempat tool sudah diverifikasi dengan data live BEI pada 19 Okt 2026 (harga, perubahan harian, dividen, dan total return cocok dengan respons mentah Yahoo). Jika menemukan angka yang berbeda dengan aplikasi sekuritas Anda, mohon [laporkan](https://github.com/Zalfrie/idx-stock-mcp/issues/new/choose).
+> 🧪 **Status:** parser data diuji dengan 41 test offline (data tiruan berformat respons Yahoo Finance) dan keempat tool sudah diverifikasi dengan data live BEI pada 19 Okt 2026 (harga, perubahan harian, dividen, dan total return cocok dengan respons mentah Yahoo). Jika menemukan angka yang berbeda dengan aplikasi sekuritas Anda, mohon [laporkan](https://github.com/Zalfrie/idx-stock-mcp/issues/new/choose).
 
 ## Daftar isi
 

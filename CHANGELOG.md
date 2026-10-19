@@ -5,6 +5,10 @@ versi mengikuti [Semantic Versioning](https://semver.org/lang/id/).
 
 ## [Belum dirilis]
 
+_Tidak ada._
+
+## [1.2.0] - 2026-10-19
+
 ### Ditambahkan
 - `YahooClient`: percobaan ulang otomatis dengan backoff eksponensial + jitter saat HTTP 429/5xx atau error jaringan
   (opsi `maxRetries` default 2, `retryBaseMs` default 500, header `Retry-After` dihormati maksimum 15 detik).

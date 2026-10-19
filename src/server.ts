@@ -34,7 +34,7 @@ export function splitCheckRange(buyDate: string | undefined, nowMs: number): Ran
 
 export function createServer(opts: ServerOptions = {}) {
   const client = opts.client ?? new YahooClient();
-  const server = new McpServer({ name: "idx-stock-mcp", version: "1.1.1" });
+  const server = new McpServer({ name: "idx-stock-mcp", version: "1.2.0" });
 
   const readOnly = { readOnlyHint: true, openWorldHint: true } as const;
 
